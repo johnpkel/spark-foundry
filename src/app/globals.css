@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* Venus Design System Tokens */
+:root {
+  /* Brand colors */
+  --venus-purple: #6c5ce7;
+  --venus-purple-dark: #3e3871;
+  --venus-purple-light: #efedfc;
+  --venus-purple-medium: #9387ed;
+  --venus-purple-deep: #5d50bf;
+
+  /* Neutral colors */
+  --venus-gray-50: #f7f9fc;
+  --venus-gray-100: #edf1f7;
+  --venus-gray-200: #dde3ee;
+  --venus-gray-300: #c7d0e1;
+  --venus-gray-400: #a9b6cb;
+  --venus-gray-500: #647696;
+  --venus-gray-600: #475161;
+  --venus-gray-700: #222222;
+
+  /* Status colors */
+  --venus-green: #007a52;
+  --venus-green-light: #f5fffc;
+  --venus-red: #d62400;
+  --venus-red-light: #ffeeeb;
+  --venus-blue: #00b9e0;
+  --venus-blue-light: #f5fdff;
+  --venus-yellow: #ffae0a;
+  --venus-yellow-light: #fff8eb;
+
+  /* Shadows */
+  --venus-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --venus-shadow-md: 0px 2px 4px rgba(0, 0, 0, 0.14), 0px 5px 5px rgba(0, 0, 0, 0.12), 0px 1px 10px rgba(108, 92, 231, 0.2);
+  --venus-shadow-lg: 0px 8px 10px 1px rgba(0, 0, 0, 0.14), 0px 3px 14px 3px rgba(0, 0, 0, 0.12), 0px 4px 15px rgba(108, 92, 231, 0.2);
+
+  /* App colors */
+  --background: #f7f9fc;
+  --foreground: #222222;
+  --card-bg: #ffffff;
+  --border-color: #dde3ee;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-venus-purple: #6c5ce7;
+  --color-venus-purple-dark: #3e3871;
+  --color-venus-purple-light: #efedfc;
+  --color-venus-purple-medium: #9387ed;
+  --color-venus-purple-deep: #5d50bf;
+  --color-venus-gray-50: #f7f9fc;
+  --color-venus-gray-100: #edf1f7;
+  --color-venus-gray-200: #dde3ee;
+  --color-venus-gray-300: #c7d0e1;
+  --color-venus-gray-400: #a9b6cb;
+  --color-venus-gray-500: #647696;
+  --color-venus-gray-600: #475161;
+  --color-venus-gray-700: #222222;
+  --color-venus-green: #007a52;
+  --color-venus-green-light: #f5fffc;
+  --color-venus-red: #d62400;
+  --color-venus-red-light: #ffeeeb;
+  --color-venus-blue: #00b9e0;
+  --color-venus-blue-light: #f5fdff;
+  --color-venus-yellow: #ffae0a;
+  --color-venus-yellow-light: #fff8eb;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--venus-gray-300);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--venus-gray-400);
+}
+
+/* Chat markdown styling */
+.chat-content h1, .chat-content h2, .chat-content h3 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+.chat-content h1 { font-size: 1.25rem; }
+.chat-content h2 { font-size: 1.125rem; }
+.chat-content h3 { font-size: 1rem; }
+.chat-content p { margin-bottom: 0.75em; }
+.chat-content ul, .chat-content ol {
+  margin-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.chat-content li { margin-bottom: 0.25em; }
+.chat-content code {
+  background: var(--venus-gray-100);
+  padding: 0.125em 0.375em;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+.chat-content pre {
+  background: var(--venus-gray-700);
+  color: white;
+  padding: 1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+.chat-content pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
