@@ -32,7 +32,7 @@ export async function runSparkAgent(
     prompt,
     options: {
       systemPrompt: SYSTEM_PROMPT,
-      model: 'opus',
+      model: 'sonnet',
       maxTurns: 10,
       mcpServers: {
         'spark-tools': mcpServer,
@@ -59,7 +59,7 @@ export async function runSparkAgentSync(
     prompt,
     options: {
       systemPrompt: SYSTEM_PROMPT,
-      model: 'opus',
+      model: 'sonnet',
       maxTurns: 10,
       mcpServers: {
         'spark-tools': mcpServer,

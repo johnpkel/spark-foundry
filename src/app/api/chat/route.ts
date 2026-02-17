@@ -272,7 +272,7 @@ export async function POST(request: NextRequest) {
         // Phase 1: Tool-use rounds (non-streaming, text is suppressed anyway)
         for (let turn = 0; turn < 10; turn++) {
           const response = await anthropic.messages.create({
-            model: 'claude-opus-4-6',
+            model: 'claude-sonnet-4-5-20250929',
             max_tokens: 4096,
             system: systemPrompt,
             tools: TOOLS,
@@ -322,7 +322,7 @@ export async function POST(request: NextRequest) {
           send({ type: 'status', content: 'Generating response...' });
 
           const stream = anthropic.messages.stream({
-            model: 'claude-opus-4-6',
+            model: 'claude-sonnet-4-5-20250929',
             max_tokens: 4096,
             system: systemPrompt,
             tools: TOOLS,
