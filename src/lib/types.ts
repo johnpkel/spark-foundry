@@ -3,7 +3,7 @@
 // ============================================
 
 export type SparkStatus = 'active' | 'archived';
-export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note';
+export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note' | 'google_drive';
 export type ChatRole = 'user' | 'assistant' | 'system';
 export type ArtifactType = 'cms_entry' | 'campaign_brief' | 'custom';
 export type ArtifactStatus = 'draft' | 'published' | 'archived';
@@ -45,6 +45,15 @@ export interface SparkItemMetadata {
   scraped_images?: string[];
   scrape_status?: 'success' | 'failed';
   scraped_at?: string;
+  // Google Drive fields
+  drive_file_id?: string;
+  drive_mime_type?: string;
+  drive_icon_url?: string;
+  drive_thumbnail_url?: string;
+  drive_web_view_link?: string;
+  drive_modified_time?: string;
+  drive_export_status?: 'pending' | 'success' | 'failed';
+  drive_exported_at?: string;
   [key: string]: unknown;
 }
 

@@ -89,6 +89,11 @@ function getItemImageUrl(item: Record<string, unknown>): string | null {
     return url.startsWith('http') ? url : null;
   }
 
+  if (item.type === 'google_drive' && metadata?.drive_thumbnail_url) {
+    const url = metadata.drive_thumbnail_url as string;
+    return url.startsWith('http') ? url : null;
+  }
+
   return null;
 }
 

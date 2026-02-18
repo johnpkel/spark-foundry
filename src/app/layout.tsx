@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+// import HeaderUserMenu from "@/components/HeaderUserMenu";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -39,6 +40,8 @@ export default function RootLayout({
               <h1 className="text-lg font-semibold text-venus-gray-700">Spark Foundry</h1>
             </div>
             <div className="ml-auto flex items-center gap-4">
+              {/* TODO: Re-enable when Contentstack OAuth is ready */}
+              {/* <HeaderUserMenu /> */}
               <span className="text-sm text-venus-gray-500">for Contentstack DXP</span>
             </div>
           </header>

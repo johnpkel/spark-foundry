@@ -47,7 +47,7 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
   const isScraping = isLink && !scrapeStatus;
 
   // Drive-specific export data
-  const isDrive = (item.type as string) === 'google_drive';
+  const isDrive = item.type === 'google_drive';
   const driveExportStatus = item.metadata?.drive_export_status as string | undefined;
   const isDriveExporting = isDrive && driveExportStatus === 'pending';
 

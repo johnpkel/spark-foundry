@@ -7,6 +7,26 @@ import {
   getImageUrl,
 } from '@/lib/embeddings';
 
+// GET /api/items/[id] - Fetch a single item
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+
+  const { data, error } = await supabaseAdmin
+    .from('spark_items')
+    .select('id, type, title, content, summary, metadata, created_at, updated_at')
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 404 });
+  }
+
+  return NextResponse.json(data);
+}
+
 // PATCH /api/items/[id] - Update an item
 export async function PATCH(
   request: NextRequest,

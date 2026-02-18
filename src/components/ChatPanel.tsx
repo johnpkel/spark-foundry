@@ -232,9 +232,9 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last.role === 'assistant') {
-                      last.content += data.content;
+                      updated[updated.length - 1] = { ...last, content: last.content + data.content };
                     }
-                    return [...updated];
+                    return updated;
                   });
                 } else if (data.type === 'status') {
                   setStatusMessage(data.content);
@@ -244,9 +244,9 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last.role === 'assistant') {
-                      last.content = `Error: ${data.content}`;
+                      updated[updated.length - 1] = { ...last, content: `Error: ${data.content}` };
                     }
-                    return [...updated];
+                    return updated;
                   });
                 } else if (data.type === 'done') {
                   setStatusMessage(null);
@@ -263,9 +263,9 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
         const updated = [...prev];
         const last = updated[updated.length - 1];
         if (last.role === 'assistant' && !last.content) {
-          last.content = 'Sorry, something went wrong. Please try again.';
+          updated[updated.length - 1] = { ...last, content: 'Sorry, something went wrong. Please try again.' };
         }
-        return [...updated];
+        return updated;
       });
     } finally {
       setIsStreaming(false);

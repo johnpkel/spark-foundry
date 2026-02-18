@@ -195,5 +195,13 @@ export function getImageUrl(item: {
     }
   }
 
+  // For Google Drive items, use thumbnail
+  if (item.type === 'google_drive' && meta?.drive_thumbnail_url) {
+    const url = meta.drive_thumbnail_url as string;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+  }
+
   return undefined;
 }
