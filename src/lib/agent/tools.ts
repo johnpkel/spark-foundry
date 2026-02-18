@@ -3,6 +3,62 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { generateQueryEmbedding } from '@/lib/embeddings';
 
+const MAX_IMAGES_PER_RESULT = 3;
+
+/** Extract image URL from a Spark item (image items + link items with OG image) */
+function getItemImageUrl(item: Record<string, unknown>): string | null {
+  const metadata = item.metadata as Record<string, unknown> | null;
+
+  if (item.type === 'image') {
+    const url = (metadata?.image_url as string) || (item.content as string);
+    return url?.startsWith('http') ? url : null;
+  }
+
+  if (item.type === 'link' && metadata?.og_image) {
+    const url = metadata.og_image as string;
+    return url.startsWith('http') ? url : null;
+  }
+
+  return null;
+}
+
+/** Fetch an image URL and return base64-encoded data (MCP protocol requires base64) */
+async function fetchImageBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    return {
+      data: Buffer.from(buffer).toString('base64'),
+      mimeType: res.headers.get('content-type') || 'image/jpeg',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Append base64 image content blocks for any image items in the list */
+async function appendImageBlocks(
+  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>,
+  items: Record<string, unknown>[]
+): Promise<void> {
+  let imageCount = 0;
+  for (const item of items) {
+    if (imageCount >= MAX_IMAGES_PER_RESULT) break;
+    const imageUrl = getItemImageUrl(item);
+    if (imageUrl) {
+      const imageData = await fetchImageBase64(imageUrl);
+      if (imageData) {
+        content.push(
+          { type: 'image' as const, data: imageData.data, mimeType: imageData.mimeType },
+          { type: 'text' as const, text: `Above image: "${item.title}"` }
+        );
+        imageCount++;
+      }
+    }
+  }
+}
+
 /**
  * MCP tool: Semantic search items in a Spark using vector similarity.
  * Embeds the query, then uses the match_spark_items RPC function for cosine similarity search.
@@ -41,12 +97,13 @@ const semanticSearchSparkItems = tool(
           similarity: item.similarity,
         }));
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Found ${results.length} semantically relevant items:\n${JSON.stringify(results, null, 2)}`,
-          }],
-        };
+        const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{
+          type: 'text' as const,
+          text: `Found ${results.length} semantically relevant items:\n${JSON.stringify(results, null, 2)}`,
+        }];
+        await appendImageBlocks(content, data);
+
+        return { content };
       }
 
       if (error) {
@@ -85,12 +142,13 @@ const semanticSearchSparkItems = tool(
       created_at: item.created_at,
     }));
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Found ${results.length} items (keyword match):\n${JSON.stringify(results, null, 2)}`,
-      }],
-    };
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{
+      type: 'text' as const,
+      text: `Found ${results.length} items (keyword match):\n${JSON.stringify(results, null, 2)}`,
+    }];
+    await appendImageBlocks(content, data as Record<string, unknown>[]);
+
+    return { content };
   }
 );
 
@@ -135,12 +193,13 @@ const searchSparkItems = tool(
       created_at: item.created_at,
     }));
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(results, null, 2),
-      }],
-    };
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{
+      type: 'text' as const,
+      text: JSON.stringify(results, null, 2),
+    }];
+    await appendImageBlocks(content, data as Record<string, unknown>[]);
+
+    return { content };
   }
 );
 
@@ -183,12 +242,13 @@ const listSparkItems = tool(
       created_at: item.created_at,
     }));
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Found ${results.length} items:\n${JSON.stringify(results, null, 2)}`,
-      }],
-    };
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{
+      type: 'text' as const,
+      text: `Found ${results.length} items:\n${JSON.stringify(results, null, 2)}`,
+    }];
+    await appendImageBlocks(content, data as Record<string, unknown>[]);
+
+    return { content };
   }
 );
 

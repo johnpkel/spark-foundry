@@ -42,6 +42,9 @@ export interface SparkItemMetadata {
   og_description?: string;
   og_image?: string;
   favicon?: string;
+  scraped_images?: string[];
+  scrape_status?: 'success' | 'failed';
+  scraped_at?: string;
   [key: string]: unknown;
 }
 

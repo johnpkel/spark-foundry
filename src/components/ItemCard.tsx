@@ -1,7 +1,7 @@
 'use client';
 
 import { formatDistanceToNow } from 'date-fns';
-import { Link2, Image, FileText, StickyNote, File, ExternalLink, Trash2, X } from 'lucide-react';
+import { Link2, Image, FileText, StickyNote, File, ExternalLink, X, Loader2 } from 'lucide-react';
 import type { SparkItem } from '@/lib/types';
 
 interface ItemCardProps {
@@ -23,6 +23,19 @@ export default function ItemCard({ item, onDelete }: ItemCardProps) {
   const url = item.metadata?.url || item.metadata?.image_url || item.metadata?.file_url;
   const tags = item.metadata?.tags as string[] | undefined;
 
+  // Link-specific scraped data
+  const isLink = item.type === 'link';
+  const scrapeStatus = item.metadata?.scrape_status as string | undefined;
+  const isScraping = isLink && !scrapeStatus;
+  const ogImage = item.metadata?.og_image as string | undefined;
+  const scrapedImages = item.metadata?.scraped_images as string[] | undefined;
+  const heroImage = ogImage || scrapedImages?.[0];
+
+  // Prefer OG description / summary over raw scraped text for link items
+  const displayContent = isLink
+    ? (item.metadata?.og_description as string) || item.summary || item.content
+    : item.content;
+
   return (
     <div className="bg-white rounded-lg border border-venus-gray-200 p-4 hover:border-venus-purple/30 transition-colors group">
       <div className="flex items-start justify-between gap-3">
@@ -38,12 +51,36 @@ export default function ItemCard({ item, onDelete }: ItemCardProps) {
               </span>
             </div>
 
-            {item.content && (
+            {/* Scraping in progress indicator */}
+            {isScraping && (
+              <div className="flex items-center gap-1.5 text-xs text-venus-gray-400 mb-2">
+                <Loader2 size={12} className="animate-spin" />
+                Fetching page details...
+              </div>
+            )}
+
+            {/* OG / hero image for link items */}
+            {isLink && heroImage && (
+              <div className="mb-2 rounded-md overflow-hidden border border-venus-gray-100 max-w-xs">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={heroImage}
+                  alt={item.metadata?.og_title as string || item.title}
+                  className="w-full h-32 object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
+            )}
+
+            {displayContent && (
               <p className="text-sm text-venus-gray-500 line-clamp-2 mb-2">
-                {item.content}
+                {displayContent}
               </p>
             )}
 
+            {/* Image item preview (existing behavior) */}
             {item.type === 'image' && item.metadata?.image_url && (
               <div className="mb-2 rounded-md overflow-hidden border border-venus-gray-100 max-w-xs">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -55,6 +92,31 @@ export default function ItemCard({ item, onDelete }: ItemCardProps) {
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}
                 />
+              </div>
+            )}
+
+            {/* Scraped page images thumbnail row */}
+            {isLink && scrapedImages && scrapedImages.length > (ogImage ? 0 : 1) && (
+              <div className="flex gap-1.5 overflow-x-auto mb-2 pb-1 scrollbar-thin">
+                {scrapedImages
+                  .filter((img) => img !== ogImage)
+                  .slice(0, 6)
+                  .map((imgUrl) => (
+                    <div
+                      key={imgUrl}
+                      className="w-12 h-12 rounded border border-venus-gray-100 overflow-hidden shrink-0"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imgUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).parentElement!.style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  ))}
               </div>
             )}
 

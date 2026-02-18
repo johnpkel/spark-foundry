@@ -178,12 +178,22 @@ export function getImageUrl(item: {
   content?: string | null;
   metadata?: Record<string, unknown>;
 }): string | undefined {
-  if (item.type !== 'image') return undefined;
   const meta = item.metadata as Record<string, unknown> | undefined;
-  const url = (meta?.image_url as string) || item.content || undefined;
-  // Only return valid HTTP URLs
-  if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-    return url;
+
+  if (item.type === 'image') {
+    const url = (meta?.image_url as string) || item.content || undefined;
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      return url;
+    }
   }
+
+  // For link items, use OG image for multimodal embedding
+  if (item.type === 'link' && meta?.og_image) {
+    const url = meta.og_image as string;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+  }
+
   return undefined;
 }

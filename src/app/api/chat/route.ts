@@ -73,11 +73,67 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-// Execute a tool call and return the result
+const MAX_IMAGES_PER_RESULT = 5;
+
+/** Extract image URL from a Spark item (image items + link items with OG image) */
+function getItemImageUrl(item: Record<string, unknown>): string | null {
+  const metadata = item.metadata as Record<string, unknown> | null;
+
+  if (item.type === 'image') {
+    const url = (metadata?.image_url as string) || (item.content as string);
+    return url?.startsWith('http') ? url : null;
+  }
+
+  if (item.type === 'link' && metadata?.og_image) {
+    const url = metadata.og_image as string;
+    return url.startsWith('http') ? url : null;
+  }
+
+  return null;
+}
+
+/** Build multimodal tool result: JSON text + actual image blocks for image items */
+function buildToolContent(
+  items: Record<string, unknown>[],
+  prefix: string
+): Anthropic.ToolResultBlockParam['content'] {
+  const textData = items.map((item) => ({
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    content: (item.content as string)?.substring(0, 2000),
+    summary: item.summary,
+    metadata: item.metadata,
+    ...(item.similarity !== undefined && { similarity: item.similarity }),
+    ...(item.created_at !== undefined && { created_at: item.created_at }),
+  }));
+
+  const content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam> = [
+    { type: 'text', text: `${prefix}\n${JSON.stringify(textData, null, 2)}` },
+  ];
+
+  // Append actual image blocks so Claude can visually inspect them
+  let imageCount = 0;
+  for (const item of items) {
+    if (imageCount >= MAX_IMAGES_PER_RESULT) break;
+    const imageUrl = getItemImageUrl(item);
+    if (imageUrl) {
+      content.push(
+        { type: 'image', source: { type: 'url', url: imageUrl } },
+        { type: 'text', text: `Above image: "${item.title}"` }
+      );
+      imageCount++;
+    }
+  }
+
+  return content;
+}
+
+// Execute a tool call and return multimodal content (text + images)
 async function executeTool(
   name: string,
   input: Record<string, string>
-): Promise<string> {
+): Promise<Anthropic.ToolResultBlockParam['content']> {
   switch (name) {
     case 'semantic_search': {
       const queryEmbedding = await generateQueryEmbedding(input.query);
@@ -89,19 +145,7 @@ async function executeTool(
           match_count: 10,
         });
         if (!error && data?.length > 0) {
-          return JSON.stringify(
-            data.map((item: Record<string, unknown>) => ({
-              id: item.id,
-              type: item.type,
-              title: item.title,
-              content: (item.content as string)?.substring(0, 2000),
-              summary: item.summary,
-              metadata: item.metadata,
-              similarity: item.similarity,
-            })),
-            null,
-            2
-          );
+          return buildToolContent(data, `Found ${data.length} semantically relevant items:`);
         }
       }
       // Fall through to keyword search
@@ -113,7 +157,7 @@ async function executeTool(
           `title.ilike.%${input.query}%,content.ilike.%${input.query}%,summary.ilike.%${input.query}%`
         )
         .limit(10);
-      return JSON.stringify(kwData || [], null, 2);
+      return buildToolContent(kwData || [], `Found ${kwData?.length || 0} items (keyword match):`);
     }
 
     case 'keyword_search': {
@@ -125,7 +169,7 @@ async function executeTool(
           `title.ilike.%${input.query}%,content.ilike.%${input.query}%,summary.ilike.%${input.query}%`
         )
         .limit(20);
-      return JSON.stringify(data || [], null, 2);
+      return buildToolContent(data || [], `Found ${data?.length || 0} items:`);
     }
 
     case 'list_items': {
@@ -134,16 +178,8 @@ async function executeTool(
         .select('id, type, title, content, summary, metadata, created_at')
         .eq('spark_id', input.spark_id)
         .order('created_at', { ascending: false });
-      return data?.length
-        ? JSON.stringify(
-            data.map((item) => ({
-              ...item,
-              content: item.content?.substring(0, 2000),
-            })),
-            null,
-            2
-          )
-        : 'No items in this Spark yet.';
+      if (!data?.length) return 'No items in this Spark yet.';
+      return buildToolContent(data, `Found ${data.length} items:`);
     }
 
     case 'get_spark_details': {
@@ -160,14 +196,31 @@ async function executeTool(
   }
 }
 
+interface RetrievedContext {
+  text: string;
+  images: Array<{ url: string; title: string }>;
+}
+
+/** Collect image URLs from a list of retrieved items */
+function extractImageUrls(items: Record<string, unknown>[]): Array<{ url: string; title: string }> {
+  return items
+    .map((item) => {
+      const url = getItemImageUrl(item);
+      return url ? { url, title: item.title as string } : null;
+    })
+    .filter((img): img is { url: string; title: string } => img !== null)
+    .slice(0, MAX_IMAGES_PER_RESULT);
+}
+
 /**
  * Retrieve the most relevant items from the Spark using vector similarity.
  * This provides automatic RAG context before Claude even starts thinking.
+ * Returns both text (for system prompt) and image URLs (for user message).
  */
 async function retrieveContext(
   sparkId: string,
   userMessage: string
-): Promise<string> {
+): Promise<RetrievedContext> {
   const queryEmbedding = await generateQueryEmbedding(userMessage);
 
   if (!queryEmbedding) {
@@ -178,7 +231,7 @@ async function retrieveContext(
       .order('created_at', { ascending: false })
       .limit(5);
 
-    if (!data || data.length === 0) return '';
+    if (!data || data.length === 0) return { text: '', images: [] };
 
     const items = data
       .map(
@@ -187,7 +240,10 @@ async function retrieveContext(
       )
       .join('\n\n');
 
-    return `\n\n## Recent Items in This Spark\n${items}`;
+    return {
+      text: `\n\n## Recent Items in This Spark\n${items}`,
+      images: extractImageUrls(data as Record<string, unknown>[]),
+    };
   }
 
   const { data, error } = await supabaseAdmin.rpc('match_spark_items', {
@@ -205,7 +261,7 @@ async function retrieveContext(
       .order('created_at', { ascending: false })
       .limit(5);
 
-    if (!recent || recent.length === 0) return '';
+    if (!recent || recent.length === 0) return { text: '', images: [] };
 
     const items = recent
       .map(
@@ -214,7 +270,10 @@ async function retrieveContext(
       )
       .join('\n\n');
 
-    return `\n\n## Recent Items in This Spark\n${items}`;
+    return {
+      text: `\n\n## Recent Items in This Spark\n${items}`,
+      images: extractImageUrls(recent as Record<string, unknown>[]),
+    };
   }
 
   const items = data
@@ -224,7 +283,10 @@ async function retrieveContext(
     })
     .join('\n\n');
 
-  return `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${items}`;
+  return {
+    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${items}`,
+    images: extractImageUrls(data),
+  };
 }
 
 // POST /api/chat - Chat with Claude Opus via RAG pipeline
@@ -247,7 +309,7 @@ export async function POST(request: NextRequest) {
 
   // Retrieve relevant context via RAG
   const ragContext = await retrieveContext(spark_id, message);
-  const systemPrompt = SYSTEM_PROMPT + ragContext;
+  const systemPrompt = SYSTEM_PROMPT + ragContext.text;
 
   const encoder = new TextEncoder();
   const sseStream = new ReadableStream({
@@ -256,8 +318,19 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
       try {
+        // Build multimodal user message: text + any images from RAG context
+        const userContent: Anthropic.ContentBlockParam[] = [
+          { type: 'text', text: `[Spark ID: ${spark_id}]\n\n${message}` },
+        ];
+        for (const img of ragContext.images) {
+          userContent.push(
+            { type: 'image', source: { type: 'url', url: img.url } },
+            { type: 'text', text: `(Contextual image: "${img.title}")` }
+          );
+        }
+
         let messages: Anthropic.MessageParam[] = [
-          { role: 'user', content: `[Spark ID: ${spark_id}]\n\n${message}` },
+          { role: 'user', content: userContent },
         ];
 
         let fullResponse = '';
