@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Wand2, LayoutGrid, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText, StickyNote, File, HardDrive } from 'lucide-react';
 import ItemCard from '@/components/ItemCard';
 import AddItemModal from '@/components/AddItemModal';
 import ChatPanel from '@/components/ChatPanel';
 import ArtifactGenerator from '@/components/ArtifactGenerator';
-import type { Spark, SparkItem, GeneratedArtifact } from '@/lib/types';
+import ScorePanel from '@/components/ScorePanel';
+import ImageLightbox from '@/components/ImageLightbox';
+import type { Spark, SparkItem, GeneratedArtifact, ItemType } from '@/lib/types';
 
 type LeftTab = 'items' | 'generate';
 
@@ -22,6 +24,46 @@ export default function SparkWorkspace() {
   const [loading, setLoading] = useState(true);
   const [leftTab, setLeftTab] = useState<LeftTab>('items');
   const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<ItemType | 'all'>('all');
+  const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
+
+  // Resizable three-column layout
+  const [leftWidth, setLeftWidth] = useState(320);
+  const [rightWidth, setRightWidth] = useState(300);
+  const draggingHandle = useRef<'left' | 'right' | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handlePointerDown = useCallback(
+    (handle: 'left' | 'right') => (e: React.PointerEvent) => {
+      draggingHandle.current = handle;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [],
+  );
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!draggingHandle.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const minMiddle = 300;
+
+    if (draggingHandle.current === 'left') {
+      const raw = e.clientX - rect.left;
+      const max = Math.min(rect.width * 0.4, rect.width - rightWidth - minMiddle);
+      setLeftWidth(Math.min(Math.max(raw, 240), max));
+    } else {
+      const raw = rect.right - e.clientX;
+      const max = Math.min(rect.width * 0.35, rect.width - leftWidth - minMiddle);
+      setRightWidth(Math.min(Math.max(raw, 240), max));
+    }
+  }, [leftWidth, rightWidth]);
+
+  const handlePointerUp = useCallback(() => {
+    draggingHandle.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
 
   const loadSparkData = useCallback(async () => {
     try {
@@ -50,10 +92,31 @@ export default function SparkWorkspace() {
     }
   };
 
+  const handleItemUpdated = useCallback((updated: SparkItem) => {
+    setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+  }, []);
+
   const leftTabs: { id: LeftTab; label: string; icon: typeof LayoutGrid; count?: number }[] = [
     { id: 'items', label: 'Items', icon: LayoutGrid, count: items.length },
     { id: 'generate', label: 'Generate', icon: Wand2, count: artifacts.length },
   ];
+
+  const typeFilterConfig: Record<ItemType, { icon: typeof Link2; label: string }> = {
+    link: { icon: Link2, label: 'Links' },
+    image: { icon: Image, label: 'Images' },
+    text: { icon: FileText, label: 'Text' },
+    file: { icon: File, label: 'Files' },
+    note: { icon: StickyNote, label: 'Notes' },
+    google_drive: { icon: HardDrive, label: 'Drive' },
+  };
+
+  // Only show filter chips for types that exist in items
+  const availableTypes = [...new Set(items.map((i) => i.type))];
+  const filteredItems = typeFilter === 'all' ? items : items.filter((i) => i.type === typeFilter);
+
+  const handleImageClick = useCallback((src: string, alt?: string) => {
+    setLightbox({ src, alt });
+  }, []);
 
   if (loading) {
     return (
@@ -87,13 +150,20 @@ export default function SparkWorkspace() {
               <p className="text-sm text-venus-gray-500 truncate">{spark.description}</p>
             )}
           </div>
+          <button
+            onClick={() => setLeftTab('generate')}
+            className="flex items-center gap-2 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-semibold rounded-lg transition-colors shrink-0"
+          >
+            <Wand2 size={15} />
+            Generate
+          </button>
         </div>
       </div>
 
-      {/* Split layout: Items/Generate on left, Chat on right */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left panel: Items + Generate */}
-        <div className="flex-1 flex flex-col border-r border-venus-gray-200 min-w-0">
+      {/* Three-column layout: Items/Generate | Chat | Scoring */}
+      <div ref={containerRef} className="flex-1 flex overflow-hidden">
+        {/* Left column: Items + Generate */}
+        <div className="shrink-0 flex flex-col" style={{ width: leftWidth }}>
           {/* Left tab bar */}
           <div className="flex items-center gap-1 px-6 pt-4 pb-2 shrink-0">
             {leftTabs.map((tab) => {
@@ -128,9 +198,9 @@ export default function SparkWorkspace() {
           <div className="flex-1 overflow-y-auto">
             {leftTab === 'items' && (
               <div className="px-6 py-4">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-venus-gray-500 uppercase tracking-wider">
-                    {items.length} {items.length === 1 ? 'Item' : 'Items'}
+                    {filteredItems.length} {filteredItems.length === 1 ? 'Item' : 'Items'}
                   </h3>
                   <button
                     onClick={() => setShowAddItemModal(true)}
@@ -141,15 +211,65 @@ export default function SparkWorkspace() {
                   </button>
                 </div>
 
-                {items.length > 0 ? (
+                {/* Type filter chips */}
+                {availableTypes.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    <button
+                      onClick={() => setTypeFilter('all')}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        typeFilter === 'all'
+                          ? 'bg-venus-purple text-white'
+                          : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
+                      }`}
+                    >
+                      All
+                    </button>
+                    {availableTypes.map((type) => {
+                      const cfg = typeFilterConfig[type];
+                      const FilterIcon = cfg.icon;
+                      const count = items.filter((i) => i.type === type).length;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            typeFilter === type
+                              ? 'bg-venus-purple text-white'
+                              : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
+                          }`}
+                        >
+                          <FilterIcon size={11} />
+                          {cfg.label}
+                          <span className={`${typeFilter === type ? 'text-white/70' : 'text-venus-gray-400'}`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {filteredItems.length > 0 ? (
                   <div className="space-y-3">
-                    {items.map((item) => (
+                    {filteredItems.map((item) => (
                       <ItemCard
                         key={item.id}
                         item={item}
                         onDelete={handleDeleteItem}
+                        onItemUpdated={handleItemUpdated}
+                        onImageClick={handleImageClick}
                       />
                     ))}
+                  </div>
+                ) : items.length > 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-sm text-venus-gray-500">No items match this filter.</p>
+                    <button
+                      onClick={() => setTypeFilter('all')}
+                      className="text-sm text-venus-purple hover:text-venus-purple-deep mt-2 transition-colors"
+                    >
+                      Clear filter
+                    </button>
                   </div>
                 ) : (
                   <div className="text-center py-16">
@@ -184,9 +304,32 @@ export default function SparkWorkspace() {
           </div>
         </div>
 
-        {/* Right panel: Chat (always visible) */}
-        <div className="w-[420px] shrink-0 flex flex-col bg-white">
+        {/* Left resize handle */}
+        <div
+          onPointerDown={handlePointerDown('left')}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
+        />
+
+        {/* Middle column: Chat */}
+        <div className="flex-1 flex flex-col min-w-0 bg-white">
           <ChatPanel sparkId={sparkId} itemCount={items.length} />
+        </div>
+
+        {/* Right resize handle */}
+        <div
+          onPointerDown={handlePointerDown('right')}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
+        />
+
+        {/* Right column: Content Scoring */}
+        <div className="shrink-0 flex flex-col bg-white border-l border-venus-gray-200" style={{ width: rightWidth }}>
+          <div className="flex-1 overflow-y-auto">
+            <ScorePanel />
+          </div>
         </div>
       </div>
 
@@ -196,6 +339,14 @@ export default function SparkWorkspace() {
         onClose={() => setShowAddItemModal(false)}
         onAdded={loadSparkData}
       />
+
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }
