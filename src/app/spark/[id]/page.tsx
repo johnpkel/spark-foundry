@@ -101,7 +101,7 @@ export default function SparkWorkspace() {
     { id: 'generate', label: 'Generate', icon: Wand2, count: artifacts.length },
   ];
 
-  const typeFilterConfig: Record<ItemType, { icon: typeof Link2; label: string }> = {
+  const typeFilterConfig: Record<string, { icon: typeof Link2; label: string }> = {
     link: { icon: Link2, label: 'Links' },
     image: { icon: Image, label: 'Images' },
     text: { icon: FileText, label: 'Text' },
