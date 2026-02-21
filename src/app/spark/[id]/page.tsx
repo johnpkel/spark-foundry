@@ -98,11 +98,6 @@ export default function SparkWorkspace() {
     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
   }, []);
 
-  const leftTabs: { id: LeftTab; label: string; icon: typeof LayoutGrid; count?: number }[] = [
-    { id: 'items', label: 'Items', icon: LayoutGrid, count: items.length },
-    { id: 'generate', label: 'Generate', icon: Wand2, count: artifacts.length },
-  ];
-
   const typeFilterConfig: Record<string, { icon: typeof Link2; label: string }> = {
     link: { icon: Link2, label: 'Links' },
     image: { icon: Image, label: 'Images' },
@@ -168,80 +163,50 @@ export default function SparkWorkspace() {
         <div className="shrink-0 flex flex-col" style={{ width: leftWidth }}>
           {/* Left tab bar */}
           <div className="flex items-center gap-1 px-6 pt-4 pb-2 shrink-0">
-            {leftTabs.map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setLeftTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    leftTab === tab.id
-                      ? 'bg-venus-purple-light text-venus-purple'
-                      : 'text-venus-gray-500 hover:bg-venus-gray-100 hover:text-venus-gray-700'
-                  }`}
-                >
-                  <Icon size={15} />
-                  {tab.label}
-                  {tab.count !== undefined && tab.count > 0 && (
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      leftTab === tab.id
-                        ? 'bg-venus-purple/10 text-venus-purple'
-                        : 'bg-venus-gray-200 text-venus-gray-500'
-                    }`}>
-                      {tab.count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+            <button
+              onClick={() => { setLeftTab('items'); setItemsView('list'); }}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                leftTab === 'items' && itemsView === 'list'
+                  ? 'bg-venus-purple-light text-venus-purple'
+                  : 'text-venus-gray-500 hover:bg-venus-gray-100 hover:text-venus-gray-700'
+              }`}
+            >
+              <LayoutGrid size={15} />
+              Items
+              {items.length > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  leftTab === 'items' && itemsView === 'list'
+                    ? 'bg-venus-purple/10 text-venus-purple'
+                    : 'bg-venus-gray-200 text-venus-gray-500'
+                }`}>
+                  {items.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => { setLeftTab('items'); setItemsView('space'); }}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                leftTab === 'items' && itemsView === 'space'
+                  ? 'bg-venus-purple-light text-venus-purple'
+                  : 'text-venus-gray-500 hover:bg-venus-gray-100 hover:text-venus-gray-700'
+              }`}
+            >
+              <Box size={15} />
+              Vectors
+            </button>
+            <button
+              onClick={() => setShowAddItemModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 ml-auto bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Plus size={14} />
+              Add Item
+            </button>
           </div>
 
           {/* Left tab content */}
           <div className="flex-1 overflow-y-auto">
             {leftTab === 'items' && (
               <div className={`${itemsView === 'space' ? 'flex flex-col h-full' : ''} px-6 py-4`}>
-                <div className="flex items-center justify-between mb-3 shrink-0">
-                  <h3 className="text-sm font-medium text-venus-gray-500 uppercase tracking-wider">
-                    {filteredItems.length} {filteredItems.length === 1 ? 'Item' : 'Items'}
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    {/* List / 3D toggle */}
-                    {items.length > 0 && (
-                      <div className="flex items-center bg-venus-gray-100 rounded-lg p-0.5">
-                        <button
-                          onClick={() => setItemsView('list')}
-                          className={`p-1.5 rounded-md transition-colors ${
-                            itemsView === 'list'
-                              ? 'bg-white text-venus-purple shadow-sm'
-                              : 'text-venus-gray-400 hover:text-venus-gray-600'
-                          }`}
-                          title="List view"
-                        >
-                          <LayoutGrid size={14} />
-                        </button>
-                        <button
-                          onClick={() => setItemsView('space')}
-                          className={`p-1.5 rounded-md transition-colors ${
-                            itemsView === 'space'
-                              ? 'bg-white text-venus-purple shadow-sm'
-                              : 'text-venus-gray-400 hover:text-venus-gray-600'
-                          }`}
-                          title="Vector space view"
-                        >
-                          <Box size={14} />
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      onClick={() => setShowAddItemModal(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
-                    >
-                      <Plus size={14} />
-                      Add Item
-                    </button>
-                  </div>
-                </div>
-
                 {itemsView === 'space' ? (
                   /* 3D Vector Space View */
                   <div className="flex-1 min-h-0 rounded-lg border border-venus-gray-200 bg-venus-gray-50 overflow-hidden">
