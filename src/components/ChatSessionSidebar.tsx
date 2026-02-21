@@ -49,7 +49,7 @@ export default function ChatSessionSidebar({
 
       {/* Sidebar panel */}
       <div
-        className={`absolute top-0 left-0 h-full w-[280px] bg-white border-r border-venus-gray-200 z-20 transform transition-transform duration-200 ease-in-out ${
+        className={`absolute top-0 left-0 h-full w-[280px] bg-surface border-r border-venus-gray-200 z-20 transform transition-transform duration-200 ease-in-out ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Link2, Image, FileText, StickyNote, File, ExternalLink, X, Loader2, Globe, HardDrive, ChevronDown, ChevronUp } from 'lucide-react';
+import { Link2, Image, FileText, StickyNote, File, ExternalLink, X, Loader2, Globe, HardDrive, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
 import type { SparkItem } from '@/lib/types';
 
 interface ItemCardProps {
@@ -13,12 +13,13 @@ interface ItemCardProps {
 }
 
 const typeConfig = {
-  link: { icon: Link2, color: 'bg-blue-50 text-blue-600', label: 'Link' },
-  image: { icon: Image, color: 'bg-green-50 text-green-600', label: 'Image' },
-  text: { icon: FileText, color: 'bg-purple-50 text-purple-600', label: 'Text' },
-  file: { icon: File, color: 'bg-orange-50 text-orange-600', label: 'File' },
-  note: { icon: StickyNote, color: 'bg-yellow-50 text-yellow-700', label: 'Note' },
-  google_drive: { icon: HardDrive, color: 'bg-emerald-50 text-emerald-600', label: 'Drive' },
+  link: { icon: Link2, color: 'bg-venus-blue-light text-venus-blue', label: 'Link' },
+  image: { icon: Image, color: 'bg-venus-green-light text-venus-green', label: 'Image' },
+  text: { icon: FileText, color: 'bg-venus-purple-light text-venus-purple', label: 'Text' },
+  file: { icon: File, color: 'bg-venus-yellow-light text-venus-yellow', label: 'File' },
+  note: { icon: StickyNote, color: 'bg-venus-yellow-light text-venus-yellow', label: 'Note' },
+  google_drive: { icon: HardDrive, color: 'bg-venus-green-light text-venus-green', label: 'Drive' },
+  slack_message: { icon: MessageSquare, color: 'bg-venus-blue-light text-venus-blue', label: 'Slack' },
 };
 
 function getDriveLabel(mimeType: string): string {
@@ -38,8 +39,13 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
   const [expanded, setExpanded] = useState(false);
   const config = typeConfig[item.type] || typeConfig.note;
   const Icon = config.icon;
-  const url = item.metadata?.url || item.metadata?.image_url || item.metadata?.file_url || item.metadata?.drive_web_view_link;
+  const url = item.metadata?.url || item.metadata?.image_url || item.metadata?.file_url || item.metadata?.drive_web_view_link || item.metadata?.slack_permalink;
   const tags = item.metadata?.tags as string[] | undefined;
+
+  // Slack-specific data
+  const isSlack = item.type === 'slack_message';
+  const slackChannelName = item.metadata?.slack_channel_name as string | undefined;
+  const slackMessageCount = item.metadata?.slack_message_count as number | undefined;
 
   // Link-specific scraped data
   const isLink = item.type === 'link';
@@ -106,7 +112,7 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
   );
 
   return (
-    <div className="bg-white rounded-lg border border-venus-gray-200 p-4 hover:border-venus-purple/30 transition-colors group">
+    <div className="bg-card-bg rounded-lg border border-venus-gray-200 p-4 hover:border-venus-purple/30 transition-colors group">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0 flex-1">
           <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${config.color}`}>
@@ -259,6 +265,20 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
               </div>
             )}
 
+            {/* Slack item: channel name + message count */}
+            {isSlack && (
+              <div className="flex items-center gap-2 mb-1">
+                {slackChannelName && (
+                  <span className="text-xs text-venus-gray-500">#{slackChannelName}</span>
+                )}
+                {slackMessageCount && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-venus-blue-light text-venus-blue font-medium">
+                    {slackMessageCount} message{slackMessageCount !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Scraped page images thumbnail row */}
             {isLink && scrapedImages && scrapedImages.length > (ogImage ? 0 : 1) && (
               <div className="flex gap-2 overflow-x-auto mb-2 pb-1 scrollbar-thin">
@@ -311,7 +331,7 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
                   onClick={(e) => e.stopPropagation()}
                 >
                   <ExternalLink size={11} />
-                  {isDrive ? 'Open in Drive' : 'Open'}
+                  {isDrive ? 'Open in Drive' : isSlack ? 'Open in Slack' : 'Open'}
                 </a>
               )}
               {hasExpandableContent && (

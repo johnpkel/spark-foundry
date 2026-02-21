@@ -2,41 +2,49 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { generateEmbedding } from '@/lib/embeddings';
 
-// POST /api/chat/embed — Embed chat messages that don't have embeddings yet
+// POST /api/chat/embed — Embed a chat session from its accumulated user messages
 export async function POST(request: NextRequest) {
-  const { message_ids } = await request.json();
+  const { session_id } = await request.json();
 
-  if (!Array.isArray(message_ids) || message_ids.length === 0) {
+  if (!session_id) {
     return NextResponse.json(
-      { error: 'message_ids array is required' },
+      { error: 'session_id is required' },
       { status: 400 }
     );
   }
 
-  // Fetch messages that still need embedding
-  const { data: messages, error } = await supabaseAdmin
-    .from('chat_messages')
-    .select('id, content')
-    .in('id', message_ids)
-    .is('embedding', null);
+  // Fetch the session's user_messages
+  const { data: session, error } = await supabaseAdmin
+    .from('chat_sessions')
+    .select('id, user_messages')
+    .eq('id', session_id)
+    .single();
 
-  if (error || !messages || messages.length === 0) {
-    return NextResponse.json({ embedded: 0 });
+  if (error || !session) {
+    return NextResponse.json({ embedded: false, error: 'Session not found' });
   }
 
-  let embedded = 0;
-
-  for (const msg of messages) {
-    const embedding = await generateEmbedding(msg.content);
-    if (embedding) {
-      const { error: updateError } = await supabaseAdmin
-        .from('chat_messages')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', msg.id);
-
-      if (!updateError) embedded++;
-    }
+  const messages = session.user_messages as string[];
+  if (!messages || messages.length === 0) {
+    return NextResponse.json({ embedded: false });
   }
 
-  return NextResponse.json({ embedded });
+  // Concatenate all user messages for a single session embedding
+  const combined = messages.join('\n\n');
+  const embedding = await generateEmbedding(combined);
+
+  if (!embedding) {
+    return NextResponse.json({ embedded: false });
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from('chat_sessions')
+    .update({ embedding: JSON.stringify(embedding) })
+    .eq('id', session_id);
+
+  if (updateError) {
+    return NextResponse.json({ embedded: false, error: updateError.message });
+  }
+
+  return NextResponse.json({ embedded: true });
 }

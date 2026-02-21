@@ -108,7 +108,7 @@ function SpaceNode({
       {hovered && (
         <Html position={currentPos.current} distanceFactor={6} zIndexRange={[100, 0]}>
           <div
-            className="pointer-events-none select-none bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-venus-gray-200 px-3 py-2 min-w-[180px] max-w-[240px]"
+            className="pointer-events-none select-none bg-[var(--card-bg)]/95 backdrop-blur-sm rounded-lg shadow-lg border border-[var(--border-color)] px-3 py-2 min-w-[180px] max-w-[240px]"
             style={{ transform: 'translate(-50%, -120%)' }}
           >
             <div className="flex items-center gap-1.5 mb-1">

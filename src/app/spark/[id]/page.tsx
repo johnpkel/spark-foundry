@@ -128,7 +128,7 @@ export default function SparkWorkspace() {
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
       {/* Spark Header */}
-      <div className="bg-white border-b border-venus-gray-200 px-6 py-4 shrink-0">
+      <div className="bg-surface border-b border-venus-gray-200 px-6 py-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push('/')}
@@ -318,7 +318,7 @@ export default function SparkWorkspace() {
         />
 
         {/* Middle column: Chat */}
-        <div className="flex-1 flex flex-col min-w-0 bg-white">
+        <div className="flex-1 flex flex-col min-w-0 bg-surface">
           <ChatPanel sparkId={sparkId} itemCount={items.length} />
         </div>
 
@@ -331,7 +331,7 @@ export default function SparkWorkspace() {
         />
 
         {/* Right column: Content Scoring */}
-        <div className="shrink-0 flex flex-col bg-white border-l border-venus-gray-200" style={{ width: rightWidth }}>
+        <div className="shrink-0 flex flex-col bg-surface border-l border-venus-gray-200" style={{ width: rightWidth }}>
           <div className="flex-1 overflow-y-auto">
             <ScorePanel />
           </div>

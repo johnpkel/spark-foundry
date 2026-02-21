@@ -73,7 +73,7 @@ export default function Dashboard() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search sparks..."
-            className="w-full pl-10 pr-4 py-2.5 border border-venus-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-venus-purple/30 focus:border-venus-purple transition-colors"
+            className="w-full pl-10 pr-4 py-2.5 border border-venus-gray-200 rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-venus-purple/30 focus:border-venus-purple transition-colors"
           />
         </div>
       )}
@@ -82,7 +82,7 @@ export default function Dashboard() {
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-xl border border-venus-gray-200 p-5 animate-pulse">
+            <div key={i} className="bg-card-bg rounded-xl border border-venus-gray-200 p-5 animate-pulse">
               <div className="w-10 h-10 rounded-lg bg-venus-gray-100 mb-3" />
               <div className="h-5 bg-venus-gray-100 rounded w-3/4 mb-2" />
               <div className="h-4 bg-venus-gray-100 rounded w-full mb-4" />

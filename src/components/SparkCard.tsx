@@ -36,7 +36,7 @@ export default function SparkCard({ spark, itemCount = 0, onClick, onDelete }: S
 
   return (
     <div
-      className="bg-white rounded-xl border border-venus-gray-200 p-5 hover:border-venus-purple/40 hover:shadow-md transition-all cursor-pointer group relative"
+      className="bg-card-bg rounded-xl border border-venus-gray-200 p-5 hover:border-venus-purple/40 hover:shadow-md transition-all cursor-pointer group relative"
       onClick={onClick}
     >
       {/* Menu */}
@@ -51,7 +51,7 @@ export default function SparkCard({ spark, itemCount = 0, onClick, onDelete }: S
           <MoreVertical size={16} />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-8 bg-white rounded-lg shadow-lg border border-venus-gray-200 py-1 w-40 z-10">
+          <div className="absolute right-0 top-8 bg-card-bg rounded-lg shadow-lg border border-venus-gray-200 py-1 w-40 z-10">
             <button
               onClick={(e) => {
                 e.stopPropagation();

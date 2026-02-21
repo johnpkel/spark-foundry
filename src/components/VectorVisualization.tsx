@@ -14,6 +14,7 @@ const TYPE_COLORS: Record<ItemType, string> = {
   file: '#007a52',
   note: '#ffae0a',
   google_drive: '#4285f4',
+  slack_message: '#36C5F0',
 };
 
 const TYPE_LABELS: Record<ItemType, string> = {
@@ -23,6 +24,7 @@ const TYPE_LABELS: Record<ItemType, string> = {
   file: 'File',
   note: 'Note',
   google_drive: 'Drive',
+  slack_message: 'Slack',
 };
 
 // ─── Position items using golden-angle spiral ─────────
@@ -137,7 +139,7 @@ function ItemNode({
       {/* Tooltip on hover */}
       {hovered && (
         <Html position={currentPos.current} distanceFactor={6} zIndexRange={[100, 0]}>
-          <div className="pointer-events-none select-none bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-venus-gray-200 px-3 py-2 min-w-[180px] max-w-[240px]"
+          <div className="pointer-events-none select-none bg-[var(--card-bg)]/95 backdrop-blur-sm rounded-lg shadow-lg border border-[var(--border-color)] px-3 py-2 min-w-[180px] max-w-[240px]"
             style={{ transform: 'translate(-50%, -120%)' }}
           >
             <div className="flex items-center gap-1.5 mb-1">

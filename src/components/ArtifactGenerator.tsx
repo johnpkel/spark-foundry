@@ -62,7 +62,7 @@ export default function ArtifactGenerator({ sparkId, artifacts, onGenerated }: A
   return (
     <div className="space-y-6">
       {/* Generation Controls */}
-      <div className="bg-white rounded-xl border border-venus-gray-200 p-5">
+      <div className="bg-card-bg rounded-xl border border-venus-gray-200 p-5">
         <h3 className="font-semibold text-venus-gray-700 mb-1">Generate Artifacts</h3>
         <p className="text-sm text-venus-gray-500 mb-4">
           Transform your collected information into business-ready documents.
@@ -110,7 +110,7 @@ export default function ArtifactGenerator({ sparkId, artifacts, onGenerated }: A
             {artifacts.map((artifact) => (
               <div
                 key={artifact.id}
-                className="bg-white rounded-xl border border-venus-gray-200 overflow-hidden"
+                className="bg-card-bg rounded-xl border border-venus-gray-200 overflow-hidden"
               >
                 <button
                   onClick={() =>

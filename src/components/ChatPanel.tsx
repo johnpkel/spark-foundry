@@ -404,7 +404,7 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* "Did you know" fact */}
         {(didYouKnow || didYouKnowLoading) && (
-          <div className="bg-gradient-to-r from-venus-purple-light to-white rounded-xl px-4 py-3">
+          <div className="bg-gradient-to-r from-venus-purple-light to-surface rounded-xl px-4 py-3">
             <div className="flex items-start gap-3">
               <div className="w-7 h-7 rounded-full bg-venus-purple/10 flex items-center justify-center shrink-0 mt-0.5">
                 <Lightbulb size={14} className="text-venus-purple" />

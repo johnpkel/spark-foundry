@@ -3,7 +3,7 @@
 // ============================================
 
 export type SparkStatus = 'active' | 'archived';
-export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note' | 'google_drive';
+export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note' | 'google_drive' | 'slack_message';
 export type ChatRole = 'user' | 'assistant' | 'system';
 export type ArtifactType = 'cms_entry' | 'campaign_brief' | 'custom';
 export type ArtifactStatus = 'draft' | 'published' | 'archived';
@@ -54,6 +54,13 @@ export interface SparkItemMetadata {
   drive_modified_time?: string;
   drive_export_status?: 'pending' | 'success' | 'failed';
   drive_exported_at?: string;
+  // Slack fields
+  slack_channel_id?: string;
+  slack_channel_name?: string;
+  slack_thread_ts?: string;
+  slack_message_count?: number;
+  slack_permalink?: string;
+  slack_sender_name?: string;
   [key: string]: unknown;
 }
 
@@ -71,6 +78,7 @@ export interface ChatSession {
   id: string;
   spark_id: string;
   title: string;
+  user_messages: string[];
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;

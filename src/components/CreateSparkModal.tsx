@@ -42,7 +42,7 @@ export default function CreateSparkModal({ isOpen, onClose, onCreated }: CreateS
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-lg w-full max-w-md mx-4 p-6" style={{ boxShadow: 'var(--venus-shadow-lg)' }}>
+      <div className="relative bg-card-bg rounded-xl shadow-lg w-full max-w-md mx-4 p-6" style={{ boxShadow: 'var(--venus-shadow-lg)' }}>
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold text-venus-gray-700">Create New Spark</h2>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-venus-gray-100 text-venus-gray-500">

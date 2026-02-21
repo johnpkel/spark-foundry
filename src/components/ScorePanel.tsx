@@ -14,14 +14,14 @@ import {
 /* ── helpers ─────────────────────────────────── */
 
 function scoreColor(pct: number) {
-  if (pct >= 80) return 'bg-green-500';
-  if (pct >= 60) return 'bg-yellow-500';
-  return 'bg-red-500';
+  if (pct >= 80) return 'bg-venus-green';
+  if (pct >= 60) return 'bg-venus-yellow';
+  return 'bg-venus-red';
 }
 
 function badgeColor(pct: number) {
-  if (pct >= 80) return 'bg-green-100 text-green-700';
-  if (pct >= 60) return 'bg-yellow-100 text-yellow-700';
+  if (pct >= 80) return 'bg-venus-green-light text-venus-green';
+  if (pct >= 60) return 'bg-venus-yellow-light text-venus-yellow';
   return 'bg-venus-gray-100 text-venus-gray-500';
 }
 
@@ -42,7 +42,7 @@ function Section({
   title,
   children,
 }: {
-  icon: React.ElementType;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
   title: string;
   children: React.ReactNode;
 }) {
@@ -138,9 +138,9 @@ export default function ScorePanel() {
           {brandChecks.map((c) => (
             <div key={c.label} className="flex items-center gap-2">
               {c.pass ? (
-                <Check size={14} className="text-green-500 shrink-0" />
+                <Check size={14} className="text-venus-green shrink-0" />
               ) : (
-                <AlertTriangle size={14} className="text-yellow-500 shrink-0" />
+                <AlertTriangle size={14} className="text-venus-yellow shrink-0" />
               )}
               <span className="text-sm text-venus-gray-600">{c.label}</span>
             </div>

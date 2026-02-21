@@ -255,14 +255,42 @@ async function retrieveContext(
     };
   }
 
-  const { data, error } = await supabaseAdmin.rpc('match_spark_items', {
-    p_spark_id: sparkId,
-    query_embedding: JSON.stringify(queryEmbedding),
-    match_threshold: 0.25,
-    match_count: 8,
-  });
+  // Search both spark_items and chat_sessions in parallel
+  const [itemsResult, sessionsResult] = await Promise.all([
+    supabaseAdmin.rpc('match_spark_items', {
+      p_spark_id: sparkId,
+      query_embedding: JSON.stringify(queryEmbedding),
+      match_threshold: 0.25,
+      match_count: 8,
+    }),
+    supabaseAdmin.rpc('match_chat_sessions', {
+      p_spark_id: sparkId,
+      query_embedding: JSON.stringify(queryEmbedding),
+      match_threshold: 0.25,
+      match_count: 5,
+    }),
+  ]);
+
+  const { data, error } = itemsResult;
+  const { data: sessionData, error: sessionError } = sessionsResult;
 
   console.log('[retrieveContext] match_spark_items result:', { error: error?.message || null, count: data?.length || 0 });
+  console.log('[retrieveContext] match_chat_sessions result:', { error: sessionError?.message || null, count: sessionData?.length || 0 });
+
+  // Build chat session context text
+  let sessionContextText = '';
+  if (sessionData && sessionData.length > 0) {
+    const sessionTexts = sessionData
+      .map((session: Record<string, unknown>, i: number) => {
+        const similarity = ((session.similarity as number) * 100).toFixed(0);
+        const messages = session.user_messages as string[];
+        const messageText = messages.map((m, j) => `  Message ${j + 1}: ${m}`).join('\n');
+        return `${i + 1}. Chat: "${session.title}" (${similarity}% match)\n${messageText}`;
+      })
+      .join('\n\n');
+
+    sessionContextText = `\n\n## Relevant Past Conversations\nThe following previous chat sessions in this Spark are relevant:\n\n${sessionTexts}`;
+  }
 
   if (error || !data || data.length === 0) {
     console.log('[retrieveContext] Vector search failed/empty — falling back to recent items');
@@ -273,7 +301,12 @@ async function retrieveContext(
       .order('created_at', { ascending: false })
       .limit(5);
 
-    if (!recent || recent.length === 0) return { text: '', images: [], items: [] };
+    if (!recent || recent.length === 0) {
+      if (sessionContextText) {
+        return { text: sessionContextText, images: [], items: [] };
+      }
+      return { text: '', images: [], items: [] };
+    }
 
     const recentTexts = recent
       .map(
@@ -283,7 +316,7 @@ async function retrieveContext(
       .join('\n\n');
 
     return {
-      text: `\n\n## Recent Items in This Spark\n${recentTexts}`,
+      text: `\n\n## Recent Items in This Spark\n${recentTexts}${sessionContextText}`,
       images: extractImageUrls(recent as Record<string, unknown>[]),
       items: [],
     };
@@ -305,7 +338,7 @@ async function retrieveContext(
     .join('\n\n');
 
   return {
-    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${itemTexts}`,
+    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${itemTexts}${sessionContextText}`,
     images: extractImageUrls(data),
     items: contextItems,
   };
@@ -332,7 +365,8 @@ export async function POST(request: NextRequest) {
         .from('chat_sessions')
         .insert({
           spark_id,
-          title: message.slice(0, 50) + (message.length > 50 ? '...' : ''),
+          title: message,
+          user_messages: [message],
         })
         .select()
         .single();
@@ -343,9 +377,15 @@ export async function POST(request: NextRequest) {
       if (newSession) {
         sessionId = newSession.id;
       }
+    } else {
+      // Append user message to the existing session's user_messages array
+      await supabaseAdmin.rpc('append_session_user_message', {
+        p_session_id: sessionId,
+        p_message: message,
+      });
     }
 
-    // Save the user message with session_id
+    // Save the user message to chat_messages
     const { data: savedMsg } = await supabaseAdmin
       .from('chat_messages')
       .insert({
@@ -552,14 +592,13 @@ export async function POST(request: NextRequest) {
               .eq('id', sessionId);
           }
 
-          // Embed both messages (awaited so serverless runtime doesn't kill it)
-          const messageIds = [userMessageId, assistantMessageId].filter(Boolean);
-          if (messageIds.length > 0) {
+          // Embed the session (all user messages combined)
+          if (sessionId) {
             const baseUrl = request.nextUrl.origin;
             await fetch(`${baseUrl}/api/chat/embed`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message_ids: messageIds }),
+              body: JSON.stringify({ session_id: sessionId }),
             }).catch(() => {
               // Embedding is best-effort
             });

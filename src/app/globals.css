@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-/* Venus Design System Tokens */
+/* ═══════════════════════════════════════════════
+   Venus Design System — Light Theme (default)
+   ═══════════════════════════════════════════════ */
 :root {
   /* Brand colors */
   --venus-purple: #6c5ce7;
@@ -34,48 +36,107 @@
   --venus-shadow-md: 0px 2px 4px rgba(0, 0, 0, 0.14), 0px 5px 5px rgba(0, 0, 0, 0.12), 0px 1px 10px rgba(108, 92, 231, 0.2);
   --venus-shadow-lg: 0px 8px 10px 1px rgba(0, 0, 0, 0.14), 0px 3px 14px 3px rgba(0, 0, 0, 0.12), 0px 4px 15px rgba(108, 92, 231, 0.2);
 
-  /* App colors */
+  /* App-level semantic tokens */
   --background: #f7f9fc;
   --foreground: #222222;
   --card-bg: #ffffff;
+  --surface: #ffffff;
   --border-color: #dde3ee;
+
+  color-scheme: light;
 }
 
+/* ═══════════════════════════════════════════════
+   Venus Design System — Dark Theme
+   Neutral gray base — purple appears only in accents
+   ═══════════════════════════════════════════════ */
+.dark {
+  /* Brand — lifted for dark bg contrast */
+  --venus-purple: #7c6ef0;
+  --venus-purple-dark: #b8aef5;
+  --venus-purple-light: #1f1b2e;
+  --venus-purple-medium: #a599f2;
+  --venus-purple-deep: #6558d4;
+
+  /* Neutrals — true grays with minimal blue tint */
+  --venus-gray-50: #111114;
+  --venus-gray-100: #18181b;
+  --venus-gray-200: #222228;
+  --venus-gray-300: #2e2e35;
+  --venus-gray-400: #52525b;
+  --venus-gray-500: #8b8b96;
+  --venus-gray-600: #b4b4be;
+  --venus-gray-700: #e4e4e8;
+
+  /* Status — softer on dark to avoid neon */
+  --venus-green: #34d399;
+  --venus-green-light: #0f1a16;
+  --venus-red: #f87171;
+  --venus-red-light: #1f1212;
+  --venus-blue: #38bdf8;
+  --venus-blue-light: #0f171c;
+  --venus-yellow: #fbbf24;
+  --venus-yellow-light: #1c1a0f;
+
+  /* Shadows — deeper */
+  --venus-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --venus-shadow-md: 0px 2px 6px rgba(0, 0, 0, 0.5), 0px 1px 10px rgba(0, 0, 0, 0.3);
+  --venus-shadow-lg: 0px 8px 16px rgba(0, 0, 0, 0.6), 0px 4px 20px rgba(0, 0, 0, 0.4);
+
+  /* App-level semantic tokens */
+  --background: #0e0e11;
+  --foreground: #e4e4e8;
+  --card-bg: #18181b;
+  --surface: #1a1a1e;
+  --border-color: #2e2e35;
+
+  color-scheme: dark;
+}
+
+/* ═══════════════════════════════════════════════
+   Tailwind Theme Mapping
+   ═══════════════════════════════════════════════ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-venus-purple: #6c5ce7;
-  --color-venus-purple-dark: #3e3871;
-  --color-venus-purple-light: #efedfc;
-  --color-venus-purple-medium: #9387ed;
-  --color-venus-purple-deep: #5d50bf;
-  --color-venus-gray-50: #f7f9fc;
-  --color-venus-gray-100: #edf1f7;
-  --color-venus-gray-200: #dde3ee;
-  --color-venus-gray-300: #c7d0e1;
-  --color-venus-gray-400: #a9b6cb;
-  --color-venus-gray-500: #647696;
-  --color-venus-gray-600: #475161;
-  --color-venus-gray-700: #222222;
-  --color-venus-green: #007a52;
-  --color-venus-green-light: #f5fffc;
-  --color-venus-red: #d62400;
-  --color-venus-red-light: #ffeeeb;
-  --color-venus-blue: #00b9e0;
-  --color-venus-blue-light: #f5fdff;
-  --color-venus-yellow: #ffae0a;
-  --color-venus-yellow-light: #fff8eb;
+  --color-card-bg: var(--card-bg);
+  --color-surface: var(--surface);
+  --color-venus-purple: var(--venus-purple);
+  --color-venus-purple-dark: var(--venus-purple-dark);
+  --color-venus-purple-light: var(--venus-purple-light);
+  --color-venus-purple-medium: var(--venus-purple-medium);
+  --color-venus-purple-deep: var(--venus-purple-deep);
+  --color-venus-gray-50: var(--venus-gray-50);
+  --color-venus-gray-100: var(--venus-gray-100);
+  --color-venus-gray-200: var(--venus-gray-200);
+  --color-venus-gray-300: var(--venus-gray-300);
+  --color-venus-gray-400: var(--venus-gray-400);
+  --color-venus-gray-500: var(--venus-gray-500);
+  --color-venus-gray-600: var(--venus-gray-600);
+  --color-venus-gray-700: var(--venus-gray-700);
+  --color-venus-green: var(--venus-green);
+  --color-venus-green-light: var(--venus-green-light);
+  --color-venus-red: var(--venus-red);
+  --color-venus-red-light: var(--venus-red-light);
+  --color-venus-blue: var(--venus-blue);
+  --color-venus-blue-light: var(--venus-blue-light);
+  --color-venus-yellow: var(--venus-yellow);
+  --color-venus-yellow-light: var(--venus-yellow-light);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* ═══════════════════════════════════════════════
+   Base Styles
+   ═══════════════════════════════════════════════ */
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Custom scrollbar */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -113,14 +174,67 @@ body {
 }
 .chat-content pre {
   background: var(--venus-gray-700);
-  color: white;
+  color: var(--background);
   padding: 1em;
   border-radius: 8px;
   overflow-x: auto;
   margin-bottom: 1em;
 }
+.dark .chat-content pre {
+  background: #111114;
+  color: #e4e4e8;
+}
 .chat-content pre code {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+/* ═══════════════════════════════════════════════
+   Theme Toggle Animation
+   ═══════════════════════════════════════════════ */
+.theme-toggle {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+.theme-toggle:hover {
+  background: var(--venus-gray-100);
+}
+.theme-toggle svg {
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+}
+.theme-toggle .sun-icon {
+  position: absolute;
+}
+.theme-toggle .moon-icon {
+  position: absolute;
+}
+
+/* ═══════════════════════════════════════════════
+   Dark Mode — Form Inputs
+   ═══════════════════════════════════════════════ */
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: var(--venus-gray-50);
+  color: var(--foreground);
+  border-color: var(--venus-gray-300);
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--venus-gray-500);
+}
+.dark input:focus,
+.dark textarea:focus,
+.dark select:focus {
+  border-color: var(--venus-purple);
 }
