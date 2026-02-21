@@ -60,10 +60,22 @@ export interface SparkItemMetadata {
 export interface ChatMessage {
   id: string;
   spark_id: string;
+  session_id: string | null;
   role: ChatRole;
   content: string;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+export interface ChatSession {
+  id: string;
+  spark_id: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+  last_message_preview?: string;
 }
 
 export interface GeneratedArtifact {
@@ -111,6 +123,18 @@ export interface CampaignBriefContent {
 }
 
 // ============================================
+// Vector visualization types
+// ============================================
+
+export interface VectorContextItem {
+  id: string;
+  type: ItemType;
+  title: string;
+  similarity: number;
+  summary: string | null;
+}
+
+// ============================================
 // API request/response types
 // ============================================
 
@@ -130,6 +154,8 @@ export interface CreateItemRequest {
 export interface ChatRequest {
   spark_id: string;
   message: string;
+  session_id?: string;
+  skip_persist?: boolean;
 }
 
 export interface GenerateRequest {

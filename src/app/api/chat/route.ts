@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { generateQueryEmbedding } from '@/lib/embeddings';
+import type { VectorContextItem } from '@/lib/types';
 
 const anthropic = new Anthropic();
 
@@ -89,10 +90,9 @@ function getItemImageUrl(item: Record<string, unknown>): string | null {
     return url.startsWith('http') ? url : null;
   }
 
-  if (item.type === 'google_drive' && metadata?.drive_thumbnail_url) {
-    const url = metadata.drive_thumbnail_url as string;
-    return url.startsWith('http') ? url : null;
-  }
+  // Google Drive thumbnail URLs are session-authenticated and cannot be
+  // fetched by Claude's API servers, so we skip them here.
+  // The text metadata (title, summary) is still sent for context.
 
   return null;
 }
@@ -204,6 +204,7 @@ async function executeTool(
 interface RetrievedContext {
   text: string;
   images: Array<{ url: string; title: string }>;
+  items: VectorContextItem[];
 }
 
 /** Collect image URLs from a list of retrieved items */
@@ -227,8 +228,10 @@ async function retrieveContext(
   userMessage: string
 ): Promise<RetrievedContext> {
   const queryEmbedding = await generateQueryEmbedding(userMessage);
+  console.log('[retrieveContext] queryEmbedding:', queryEmbedding ? `${queryEmbedding.length}-dim vector` : 'null');
 
   if (!queryEmbedding) {
+    console.log('[retrieveContext] No embedding — falling back to recent items');
     const { data } = await supabaseAdmin
       .from('spark_items')
       .select('type, title, content, summary, metadata')
@@ -236,9 +239,9 @@ async function retrieveContext(
       .order('created_at', { ascending: false })
       .limit(5);
 
-    if (!data || data.length === 0) return { text: '', images: [] };
+    if (!data || data.length === 0) return { text: '', images: [], items: [] };
 
-    const items = data
+    const itemTexts = data
       .map(
         (item, i) =>
           `${i + 1}. [${item.type}] ${item.title}\n${item.content?.substring(0, 500) || ''}\n${item.summary ? `Summary: ${item.summary}` : ''}`
@@ -246,8 +249,9 @@ async function retrieveContext(
       .join('\n\n');
 
     return {
-      text: `\n\n## Recent Items in This Spark\n${items}`,
+      text: `\n\n## Recent Items in This Spark\n${itemTexts}`,
       images: extractImageUrls(data as Record<string, unknown>[]),
+      items: [],
     };
   }
 
@@ -258,7 +262,10 @@ async function retrieveContext(
     match_count: 8,
   });
 
+  console.log('[retrieveContext] match_spark_items result:', { error: error?.message || null, count: data?.length || 0 });
+
   if (error || !data || data.length === 0) {
+    console.log('[retrieveContext] Vector search failed/empty — falling back to recent items');
     const { data: recent } = await supabaseAdmin
       .from('spark_items')
       .select('type, title, content, summary, metadata')
@@ -266,9 +273,9 @@ async function retrieveContext(
       .order('created_at', { ascending: false })
       .limit(5);
 
-    if (!recent || recent.length === 0) return { text: '', images: [] };
+    if (!recent || recent.length === 0) return { text: '', images: [], items: [] };
 
-    const items = recent
+    const recentTexts = recent
       .map(
         (item, i) =>
           `${i + 1}. [${item.type}] ${item.title}\n${item.content?.substring(0, 500) || ''}`
@@ -276,12 +283,21 @@ async function retrieveContext(
       .join('\n\n');
 
     return {
-      text: `\n\n## Recent Items in This Spark\n${items}`,
+      text: `\n\n## Recent Items in This Spark\n${recentTexts}`,
       images: extractImageUrls(recent as Record<string, unknown>[]),
+      items: [],
     };
   }
 
-  const items = data
+  const contextItems: VectorContextItem[] = data.map((item: Record<string, unknown>) => ({
+    id: item.id as string,
+    type: item.type as VectorContextItem['type'],
+    title: item.title as string,
+    similarity: item.similarity as number,
+    summary: (item.summary as string) || null,
+  }));
+
+  const itemTexts = data
     .map((item: Record<string, unknown>, i: number) => {
       const similarity = ((item.similarity as number) * 100).toFixed(0);
       return `${i + 1}. [${item.type}] ${item.title} (${similarity}% match)\n${(item.content as string)?.substring(0, 800) || ''}\n${item.summary ? `Summary: ${item.summary}` : ''}`;
@@ -289,14 +305,15 @@ async function retrieveContext(
     .join('\n\n');
 
   return {
-    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${items}`,
+    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${itemTexts}`,
     images: extractImageUrls(data),
+    items: contextItems,
   };
 }
 
 // POST /api/chat - Chat with Claude Opus via RAG pipeline
 export async function POST(request: NextRequest) {
-  const { spark_id, message } = await request.json();
+  const { spark_id, message, session_id: requestSessionId, skip_persist } = await request.json();
 
   if (!spark_id || !message) {
     return new Response(
@@ -305,15 +322,68 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Save the user message
-  await supabaseAdmin.from('chat_messages').insert({
-    spark_id,
-    role: 'user',
-    content: message,
-  });
+  let sessionId: string | null = requestSessionId || null;
+  let userMessageId: string | null = null;
+
+  if (!skip_persist) {
+    // Create a new session if none provided
+    if (!sessionId) {
+      const { data: newSession, error: sessionError } = await supabaseAdmin
+        .from('chat_sessions')
+        .insert({
+          spark_id,
+          title: message.slice(0, 50) + (message.length > 50 ? '...' : ''),
+        })
+        .select()
+        .single();
+
+      if (sessionError) {
+        console.error('[chat] Failed to create session:', sessionError.message);
+      }
+      if (newSession) {
+        sessionId = newSession.id;
+      }
+    }
+
+    // Save the user message with session_id
+    const { data: savedMsg } = await supabaseAdmin
+      .from('chat_messages')
+      .insert({
+        spark_id,
+        session_id: sessionId,
+        role: 'user',
+        content: message,
+      })
+      .select('id')
+      .single();
+
+    userMessageId = savedMsg?.id || null;
+  }
+
+  // Load conversation history from this session (for multi-turn context)
+  let historyMessages: Anthropic.MessageParam[] = [];
+  if (sessionId && !skip_persist && userMessageId) {
+    const { data: priorMessages } = await supabaseAdmin
+      .from('chat_messages')
+      .select('role, content')
+      .eq('session_id', sessionId)
+      .neq('id', userMessageId)
+      .in('role', ['user', 'assistant'])
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    if (priorMessages && priorMessages.length > 0) {
+      // Reverse to chronological order (queried desc for limit efficiency)
+      historyMessages = priorMessages.reverse().map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+    }
+  }
 
   // Retrieve relevant context via RAG
   const ragContext = await retrieveContext(spark_id, message);
+  console.log('[chat] RAG context:', { itemCount: ragContext.items.length, hasText: !!ragContext.text, imageCount: ragContext.images.length });
   const systemPrompt = SYSTEM_PROMPT + ragContext.text;
 
   const encoder = new TextEncoder();
@@ -323,6 +393,11 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
       try {
+        // Send context items to client for 3D visualization (before any tool use/text)
+        if (ragContext.items.length > 0) {
+          send({ type: 'context', items: ragContext.items });
+        }
+
         // Build multimodal user message: text + any images from RAG context
         const userContent: Anthropic.ContentBlockParam[] = [
           { type: 'text', text: `[Spark ID: ${spark_id}]\n\n${message}` },
@@ -335,6 +410,7 @@ export async function POST(request: NextRequest) {
         }
 
         let messages: Anthropic.MessageParam[] = [
+          ...historyMessages,
           { role: 'user', content: userContent },
         ];
 
@@ -453,15 +529,44 @@ export async function POST(request: NextRequest) {
         }
 
         // Save the full response
-        if (fullResponse) {
-          await supabaseAdmin.from('chat_messages').insert({
-            spark_id,
-            role: 'assistant',
-            content: fullResponse,
-          });
+        let assistantMessageId: string | null = null;
+        if (fullResponse && !skip_persist) {
+          const { data: savedAssistant } = await supabaseAdmin
+            .from('chat_messages')
+            .insert({
+              spark_id,
+              session_id: sessionId,
+              role: 'assistant',
+              content: fullResponse,
+            })
+            .select('id')
+            .single();
+
+          assistantMessageId = savedAssistant?.id || null;
+
+          // Update session timestamp
+          if (sessionId) {
+            await supabaseAdmin
+              .from('chat_sessions')
+              .update({ updated_at: new Date().toISOString() })
+              .eq('id', sessionId);
+          }
+
+          // Embed both messages (awaited so serverless runtime doesn't kill it)
+          const messageIds = [userMessageId, assistantMessageId].filter(Boolean);
+          if (messageIds.length > 0) {
+            const baseUrl = request.nextUrl.origin;
+            await fetch(`${baseUrl}/api/chat/embed`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message_ids: messageIds }),
+            }).catch(() => {
+              // Embedding is best-effort
+            });
+          }
         }
 
-        send({ type: 'done' });
+        send({ type: 'done', session_id: sessionId });
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown error';

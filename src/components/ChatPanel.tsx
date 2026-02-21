@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Sparkles, Search, Lightbulb } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, User, Loader2, Sparkles, Search, Lightbulb, History, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import ChatSessionSidebar from './ChatSessionSidebar';
+import VectorVisualization from './VectorVisualizationDynamic';
+import type { ChatSession, VectorContextItem } from '@/lib/types';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  contextItems?: VectorContextItem[];
+  userQuery?: string;
 }
 
 interface ChatPanelProps {
@@ -114,6 +119,11 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Session state
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
   // "Did you know" fact state
   const [didYouKnow, setDidYouKnow] = useState<string | null>(null);
   const [didYouKnowLoading, setDidYouKnowLoading] = useState(false);
@@ -121,6 +131,23 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, statusMessage]);
+
+  // Fetch sessions on mount
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/chat/sessions?spark_id=${sparkId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data);
+      }
+    } catch {
+      // silently fail
+    }
+  }, [sparkId]);
+
+  useEffect(() => {
+    fetchSessions();
+  }, [fetchSessions]);
 
   // Auto-generate "Did you know" fact when entering a Spark with items
   useEffect(() => {
@@ -136,6 +163,7 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             spark_id: sparkId,
+            skip_persist: true,
             message:
               'Generate a single short, surprising "Did you know?" fact based on the items in this Spark. Keep it to 1-2 sentences. Do not use any tools — use only the context already provided. Start your response with "Did you know?"',
           }),
@@ -197,14 +225,18 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
     setIsStreaming(true);
     setStatusMessage(null);
 
-    // Add placeholder for assistant message
-    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+    // Add placeholder for assistant message (include userQuery for visualization)
+    setMessages(prev => [...prev, { role: 'assistant', content: '', userQuery: userMessage }]);
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spark_id: sparkId, message: userMessage }),
+        body: JSON.stringify({
+          spark_id: sparkId,
+          message: userMessage,
+          session_id: activeSessionId,
+        }),
       });
 
       if (!response.ok) throw new Error('Chat request failed');
@@ -226,7 +258,17 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
-                if (data.type === 'text') {
+                if (data.type === 'context') {
+                  // Attach RAG context items to the current assistant message
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last.role === 'assistant') {
+                      updated[updated.length - 1] = { ...last, contextItems: data.items };
+                    }
+                    return updated;
+                  });
+                } else if (data.type === 'text') {
                   setStatusMessage(null);
                   setMessages(prev => {
                     const updated = [...prev];
@@ -250,6 +292,12 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
                   });
                 } else if (data.type === 'done') {
                   setStatusMessage(null);
+                  // Update session ID if server created one
+                  if (data.session_id && !activeSessionId) {
+                    setActiveSessionId(data.session_id);
+                  }
+                  // Refresh session list
+                  fetchSessions();
                 }
               } catch {
                 // Skip malformed events
@@ -273,6 +321,30 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
     }
   };
 
+  const handleSelectSession = async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setActiveSessionId(sessionId);
+      setMessages(
+        (data.messages || [])
+          .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+          .map((m: { role: string; content: string }) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          }))
+      );
+    } catch {
+      // silently fail
+    }
+  };
+
+  const handleNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -288,7 +360,46 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
   ];
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative overflow-hidden">
+      {/* Session Sidebar */}
+      <ChatSessionSidebar
+        sparkId={sparkId}
+        activeSessionId={activeSessionId}
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        sessions={sessions}
+      />
+
+      {/* Session toolbar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-venus-gray-200 bg-venus-gray-50">
+        <button
+          onClick={() => setIsHistoryOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-venus-gray-600 hover:text-venus-purple hover:bg-venus-purple-light rounded-md transition-colors"
+        >
+          <History size={14} />
+          History
+          {sessions.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 text-[10px] font-semibold bg-venus-purple/10 text-venus-purple rounded-full">
+              {sessions.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={handleNewChat}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-venus-gray-600 hover:text-venus-purple hover:bg-venus-purple-light rounded-md transition-colors"
+        >
+          <Plus size={14} />
+          New Chat
+        </button>
+        {activeSessionId && (
+          <span className="ml-auto text-xs text-venus-gray-400 truncate max-w-[200px]">
+            {sessions.find(s => s.id === activeSessionId)?.title || ''}
+          </span>
+        )}
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* "Did you know" fact */}
@@ -366,26 +477,47 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
               </div>
             )}
             <div
-              className={`max-w-[80%] rounded-xl px-4 py-3 text-sm ${
+              className={`max-w-[80%] rounded-xl text-sm ${
                 msg.role === 'user'
-                  ? 'bg-venus-purple text-white rounded-br-sm'
-                  : 'bg-venus-gray-100 text-venus-gray-700 rounded-bl-sm'
+                  ? 'bg-venus-purple text-white rounded-br-sm px-4 py-3'
+                  : 'bg-venus-gray-100 text-venus-gray-700 rounded-bl-sm overflow-hidden'
               }`}
             >
-              {msg.role === 'assistant' && !msg.content && isStreaming ? (
-                <div className="flex items-center gap-2 text-venus-gray-400">
-                  {statusMessage ? (
-                    <>
-                      <Search size={14} className="animate-pulse text-venus-purple" />
-                      <span className="text-venus-purple">{statusMessage}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>Thinking...</span>
-                    </>
+              {msg.role === 'assistant' ? (
+                <>
+                  {/* 3D Vector visualization (when RAG context items exist) */}
+                  {msg.contextItems && msg.contextItems.length > 0 && msg.userQuery && (
+                    <div className="border-b border-venus-gray-200">
+                      <VectorVisualization
+                        items={msg.contextItems}
+                        query={msg.userQuery}
+                        isProcessing={isStreaming && i === messages.length - 1}
+                      />
+                    </div>
                   )}
-                </div>
+                  {/* Spinner / status / text content */}
+                  <div className="px-4 py-3">
+                    {!msg.content && isStreaming && i === messages.length - 1 ? (
+                      <div className="flex items-center gap-2 text-venus-gray-400">
+                        {statusMessage ? (
+                          <>
+                            <Search size={14} className="animate-pulse text-venus-purple" />
+                            <span className="text-venus-purple">{statusMessage}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            <span>Thinking...</span>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="chat-content">
+                        <MessageContent content={msg.content} />
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <div className="chat-content">
                   <MessageContent content={msg.content} />

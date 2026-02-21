@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText, StickyNote, File, HardDrive } from 'lucide-react';
+import { ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText, StickyNote, File, HardDrive, Box } from 'lucide-react';
 import ItemCard from '@/components/ItemCard';
 import AddItemModal from '@/components/AddItemModal';
 import ChatPanel from '@/components/ChatPanel';
 import ArtifactGenerator from '@/components/ArtifactGenerator';
 import ScorePanel from '@/components/ScorePanel';
 import ImageLightbox from '@/components/ImageLightbox';
+import ItemsVectorSpace from '@/components/ItemsVectorSpaceDynamic';
 import type { Spark, SparkItem, GeneratedArtifact, ItemType } from '@/lib/types';
 
 type LeftTab = 'items' | 'generate';
@@ -23,6 +24,7 @@ export default function SparkWorkspace() {
   const [artifacts, setArtifacts] = useState<GeneratedArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [leftTab, setLeftTab] = useState<LeftTab>('items');
+  const [itemsView, setItemsView] = useState<'list' | 'space'>('list');
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [typeFilter, setTypeFilter] = useState<ItemType | 'all'>('all');
   const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
@@ -197,97 +199,135 @@ export default function SparkWorkspace() {
           {/* Left tab content */}
           <div className="flex-1 overflow-y-auto">
             {leftTab === 'items' && (
-              <div className="px-6 py-4">
-                <div className="flex items-center justify-between mb-3">
+              <div className={`${itemsView === 'space' ? 'flex flex-col h-full' : ''} px-6 py-4`}>
+                <div className="flex items-center justify-between mb-3 shrink-0">
                   <h3 className="text-sm font-medium text-venus-gray-500 uppercase tracking-wider">
                     {filteredItems.length} {filteredItems.length === 1 ? 'Item' : 'Items'}
                   </h3>
-                  <button
-                    onClick={() => setShowAddItemModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
-                  >
-                    <Plus size={14} />
-                    Add Item
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* List / 3D toggle */}
+                    {items.length > 0 && (
+                      <div className="flex items-center bg-venus-gray-100 rounded-lg p-0.5">
+                        <button
+                          onClick={() => setItemsView('list')}
+                          className={`p-1.5 rounded-md transition-colors ${
+                            itemsView === 'list'
+                              ? 'bg-white text-venus-purple shadow-sm'
+                              : 'text-venus-gray-400 hover:text-venus-gray-600'
+                          }`}
+                          title="List view"
+                        >
+                          <LayoutGrid size={14} />
+                        </button>
+                        <button
+                          onClick={() => setItemsView('space')}
+                          className={`p-1.5 rounded-md transition-colors ${
+                            itemsView === 'space'
+                              ? 'bg-white text-venus-purple shadow-sm'
+                              : 'text-venus-gray-400 hover:text-venus-gray-600'
+                          }`}
+                          title="Vector space view"
+                        >
+                          <Box size={14} />
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setShowAddItemModal(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      <Plus size={14} />
+                      Add Item
+                    </button>
+                  </div>
                 </div>
 
-                {/* Type filter chips */}
-                {availableTypes.length > 1 && (
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    <button
-                      onClick={() => setTypeFilter('all')}
-                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                        typeFilter === 'all'
-                          ? 'bg-venus-purple text-white'
-                          : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
-                      }`}
-                    >
-                      All
-                    </button>
-                    {availableTypes.map((type) => {
-                      const cfg = typeFilterConfig[type];
-                      const FilterIcon = cfg.icon;
-                      const count = items.filter((i) => i.type === type).length;
-                      return (
+                {itemsView === 'space' ? (
+                  /* 3D Vector Space View */
+                  <div className="flex-1 min-h-0 rounded-lg border border-venus-gray-200 bg-venus-gray-50 overflow-hidden">
+                    <ItemsVectorSpace sparkId={sparkId} />
+                  </div>
+                ) : (
+                  <>
+                    {/* Type filter chips */}
+                    {availableTypes.length > 1 && (
+                      <div className="flex flex-wrap gap-1.5 mb-4">
                         <button
-                          key={type}
-                          onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
-                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                            typeFilter === type
+                          onClick={() => setTypeFilter('all')}
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            typeFilter === 'all'
                               ? 'bg-venus-purple text-white'
                               : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
                           }`}
                         >
-                          <FilterIcon size={11} />
-                          {cfg.label}
-                          <span className={`${typeFilter === type ? 'text-white/70' : 'text-venus-gray-400'}`}>
-                            {count}
-                          </span>
+                          All
                         </button>
-                      );
-                    })}
-                  </div>
-                )}
+                        {availableTypes.map((type) => {
+                          const cfg = typeFilterConfig[type];
+                          const FilterIcon = cfg.icon;
+                          const count = items.filter((i) => i.type === type).length;
+                          return (
+                            <button
+                              key={type}
+                              onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                typeFilter === type
+                                  ? 'bg-venus-purple text-white'
+                                  : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
+                              }`}
+                            >
+                              <FilterIcon size={11} />
+                              {cfg.label}
+                              <span className={`${typeFilter === type ? 'text-white/70' : 'text-venus-gray-400'}`}>
+                                {count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                {filteredItems.length > 0 ? (
-                  <div className="space-y-3">
-                    {filteredItems.map((item) => (
-                      <ItemCard
-                        key={item.id}
-                        item={item}
-                        onDelete={handleDeleteItem}
-                        onItemUpdated={handleItemUpdated}
-                        onImageClick={handleImageClick}
-                      />
-                    ))}
-                  </div>
-                ) : items.length > 0 ? (
-                  <div className="text-center py-12">
-                    <p className="text-sm text-venus-gray-500">No items match this filter.</p>
-                    <button
-                      onClick={() => setTypeFilter('all')}
-                      className="text-sm text-venus-purple hover:text-venus-purple-deep mt-2 transition-colors"
-                    >
-                      Clear filter
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-center py-16">
-                    <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
-                      <Plus size={20} className="text-venus-gray-400" />
-                    </div>
-                    <h3 className="text-sm font-semibold text-venus-gray-700 mb-1">No items yet</h3>
-                    <p className="text-sm text-venus-gray-500 mb-4">
-                      Add links, text, images, and notes to build your Spark.
-                    </p>
-                    <button
-                      onClick={() => setShowAddItemModal(true)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
-                    >
-                      <Plus size={14} />
-                      Add First Item
-                    </button>
-                  </div>
+                    {filteredItems.length > 0 ? (
+                      <div className="space-y-3">
+                        {filteredItems.map((item) => (
+                          <ItemCard
+                            key={item.id}
+                            item={item}
+                            onDelete={handleDeleteItem}
+                            onItemUpdated={handleItemUpdated}
+                            onImageClick={handleImageClick}
+                          />
+                        ))}
+                      </div>
+                    ) : items.length > 0 ? (
+                      <div className="text-center py-12">
+                        <p className="text-sm text-venus-gray-500">No items match this filter.</p>
+                        <button
+                          onClick={() => setTypeFilter('all')}
+                          className="text-sm text-venus-purple hover:text-venus-purple-deep mt-2 transition-colors"
+                        >
+                          Clear filter
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-center py-16">
+                        <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
+                          <Plus size={20} className="text-venus-gray-400" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-venus-gray-700 mb-1">No items yet</h3>
+                        <p className="text-sm text-venus-gray-500 mb-4">
+                          Add links, text, images, and notes to build your Spark.
+                        </p>
+                        <button
+                          onClick={() => setShowAddItemModal(true)}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          <Plus size={14} />
+                          Add First Item
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
