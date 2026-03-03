@@ -30,13 +30,17 @@ function SparkItemNode({ data }: NodeProps & { data: SparkItemNodeData }) {
   const Icon = TYPE_ICONS[item.type] || FileText;
   const color = TYPE_COLORS[item.type] || '#888';
 
-  // Resolve thumbnail for image/link items
+  // Resolve thumbnail for image/link/asset items
   const thumb =
     item.type === 'image'
       ? (item.metadata?.image_url as string) || item.content || null
       : item.type === 'link'
         ? (item.metadata?.og_image as string) || null
-        : null;
+        : item.type === 'contentstack_asset' && (item.metadata?.cs_asset_content_type as string)?.startsWith('image/')
+          ? (item.metadata?.cs_asset_url as string) || item.content || null
+          : null;
+
+  const isPdf = item.type === 'contentstack_asset' && (item.metadata?.cs_asset_content_type as string) === 'application/pdf';
 
   return (
     <>
@@ -67,6 +71,11 @@ function SparkItemNode({ data }: NodeProps & { data: SparkItemNodeData }) {
               className="w-12 h-12 rounded object-cover shrink-0 border border-venus-gray-200"
               loading="lazy"
             />
+          )}
+          {!thumb && isPdf && (
+            <div className="w-12 h-12 rounded shrink-0 border border-venus-gray-200 bg-red-50 flex items-center justify-center">
+              <span className="text-[10px] font-bold text-red-500">PDF</span>
+            </div>
           )}
           {item.summary && (
             <p className="text-[10px] leading-tight text-venus-gray-500 line-clamp-2 flex-1">

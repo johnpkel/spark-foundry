@@ -36,6 +36,12 @@ function getDriveLabel(mimeType: string): string {
   return labels[mimeType] || 'Drive File';
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 15; // stop after 30s
 
@@ -287,6 +293,39 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
             {item.type === 'contentstack_entry' && item.metadata?.cs_content_type_title && (
               <span className="text-xs text-venus-gray-500">
                 {item.metadata.cs_content_type_title as string}
+              </span>
+            )}
+
+            {/* Contentstack asset: image thumbnail */}
+            {item.type === 'contentstack_asset' && (item.metadata?.cs_asset_content_type as string)?.startsWith('image/') && (item.metadata?.cs_asset_url || item.content) && (
+              <div
+                className="mb-2 rounded-md overflow-hidden border border-venus-gray-100 max-w-xs cursor-pointer"
+                onClick={() => onImageClick?.((item.metadata.cs_asset_url as string) || item.content!, item.title)}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={(item.metadata.cs_asset_url as string) || item.content!}
+                  alt={item.title}
+                  className="w-full h-32 object-cover"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              </div>
+            )}
+
+            {/* Contentstack asset: PDF badge */}
+            {item.type === 'contentstack_asset' && (item.metadata?.cs_asset_content_type as string) === 'application/pdf' && (
+              <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-md bg-red-50 border border-red-100 max-w-xs">
+                <div className="w-8 h-8 rounded flex items-center justify-center bg-red-100">
+                  <span className="text-[10px] font-bold text-red-600">PDF</span>
+                </div>
+                <span className="text-xs text-venus-gray-600 truncate">{(item.metadata?.cs_asset_filename as string) || item.title}</span>
+              </div>
+            )}
+
+            {/* Contentstack asset: file size */}
+            {item.type === 'contentstack_asset' && item.metadata?.cs_asset_file_size && (
+              <span className="text-xs text-venus-gray-400">
+                {formatFileSize(item.metadata.cs_asset_file_size as number)}
               </span>
             )}
 

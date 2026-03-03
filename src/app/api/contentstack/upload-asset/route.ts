@@ -98,10 +98,11 @@ export async function POST(request: NextRequest) {
 
   // ── Create SparkItem ──
   const metadata = {
-    contentstack_uid: asset.uid,
-    contentstack_url: asset.url,
-    content_type: asset.content_type,
-    file_size: asset.file_size,
+    cs_asset_uid: asset.uid,
+    cs_asset_url: asset.url,
+    cs_asset_content_type: asset.content_type,
+    cs_asset_file_size: asset.file_size,
+    cs_asset_filename: asset.filename || file.name,
   };
 
   const { data, error } = await supabaseAdmin
