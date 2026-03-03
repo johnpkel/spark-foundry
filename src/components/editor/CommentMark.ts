@@ -82,16 +82,10 @@ const CommentMark = Mark.create<CommentMarkOptions>({
         (threadId: string) =>
         ({ tr, dispatch }) => {
           if (!dispatch) return true;
-          const markType = tr.doc.type.schema.marks[this.name];
           tr.doc.descendants((node, pos) => {
             node.marks.forEach((mark) => {
               if (mark.type.name === this.name && mark.attrs.threadId === threadId) {
                 tr.removeMark(pos, pos + node.nodeSize, mark);
-                tr.addMark(
-                  pos,
-                  pos + node.nodeSize,
-                  markType.create({ threadId, resolved: true }),
-                );
               }
             });
           });

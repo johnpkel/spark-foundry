@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, ReactRenderer, type JSONContent } from '@tiptap/react';
+import type { Editor } from '@tiptap/core';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { useEditorContext } from '@/lib/editor-context';
 import type { EditorSelection } from '@/lib/editor-context';
@@ -16,14 +17,27 @@ import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion
 import {
   Bold, Italic, Strikethrough, Code, Heading1, Heading2, Heading3,
   List, ListOrdered, Quote, Minus, Undo, Redo, CheckSquare,
-  ImageIcon, Table2, Pencil, Sparkles, MessageSquareText,
+  ImageIcon, Table2, Pencil, Sparkles, MessageSquareText, Layers,
 } from 'lucide-react';
+import type { CanvasGroup, SparkItem } from '@/lib/types';
 import { DrawingExtension } from './editor/DrawingExtension';
+import { GroupBlockExtension } from './editor/GroupBlockExtension';
+import type { GroupBlockItem } from './editor/GroupBlockExtension';
 import CommentMark from './editor/CommentMark';
 import CommentPopover from './CommentPopover';
 import type { CommentSubmitData } from './CommentPopover';
 import MentionList from './editor/MentionList';
 import type { MentionListRef, MentionItem } from './editor/MentionList';
+import SlashCommand from './editor/SlashCommand';
+import SlashCommandList, { filterSlashCommands } from './editor/SlashCommandList';
+import type { SlashCommandListRef, SlashCommandItem } from './editor/SlashCommandList';
+
+// ─── Module-level mutable store for slash command groups ──
+// TipTap's Suggestion plugin captures `items` once at init. These
+// module-level variables let the callback read fresh data on each
+// keystroke without reinitializing the editor.
+let _canvasGroups: CanvasGroup[] = [];
+let _sparkItems: SparkItem[] = [];
 
 // ─── Mention data ────────────────────────────────────
 // Replace / extend with real user data as needed.
@@ -64,9 +78,8 @@ const mentionSuggestion = {
         component = new ReactRenderer(MentionList, {
           props,
           editor: props.editor,
-          // @ts-expect-error – ReactRenderer accepts an `as` container
-          as: popup,
         });
+        popup.appendChild(component.element);
         position(props);
       },
 
@@ -90,6 +103,136 @@ const mentionSuggestion = {
         component = null;
       },
     };
+  },
+};
+
+// ─── Slash command suggestion config ─────────────────
+const slashCommandSuggestion = {
+  items: ({ query }: { query: string }): SlashCommandItem[] => {
+    const commands = filterSlashCommands(query);
+    const q = query.toLowerCase();
+    const groupItems: SlashCommandItem[] = _canvasGroups
+      .filter(g => !q || g.name.toLowerCase().includes(q))
+      .map(g => ({
+        id: `group-${g.id}`,
+        label: g.name,
+        description: `${g.itemIds.length} item${g.itemIds.length !== 1 ? 's' : ''}${g.sessionId ? ' · has conversation' : ''}`,
+        icon: Layers,
+        category: 'Groups',
+        action: async (editor: Editor) => {
+          // Resolve item data for the group block attrs
+          const memberItems = _sparkItems.filter(i => g.itemIds.includes(i.id));
+
+          const items: GroupBlockItem[] = memberItems.map(i => {
+            const m = i.metadata ?? {};
+            const thumbnailUrl =
+              m.image_url ?? m.og_image ?? m.drive_thumbnail_url ?? m.cs_asset_url ?? null;
+            return {
+              title: i.title,
+              type: i.type,
+              summary: i.summary,
+              thumbnailUrl: typeof thumbnailUrl === 'string' ? thumbnailUrl : null,
+            };
+          });
+
+          // Insert the group block node
+          editor.chain().focus()
+            .insertGroupBlock({
+              groupId: g.id,
+              groupName: g.name,
+              color: g.color,
+              items,
+              conversation: null,
+              sessionId: g.sessionId ?? null,
+            })
+            .run();
+
+          // Async: fetch conversation and update the node attrs
+          if (g.sessionId) {
+            try {
+              const res = await fetch(`/api/chat/sessions/${g.sessionId}`);
+              if (res.ok) {
+                const { messages } = await res.json();
+                const convo = messages
+                  .filter((m: { role: string }) => m.role === 'assistant')
+                  .map((m: { content: string }) => m.content)
+                  .join('\n\n');
+                if (convo) {
+                  // Find the node by groupId and update its conversation attr
+                  const { tr } = editor.state;
+                  let updated = false;
+                  editor.state.doc.descendants((node, pos) => {
+                    if (updated) return false;
+                    if (node.type.name === 'groupBlock' && node.attrs.groupId === g.id) {
+                      tr.setNodeMarkup(pos, undefined, { ...node.attrs, conversation: convo });
+                      updated = true;
+                      return false;
+                    }
+                  });
+                  if (updated) editor.view.dispatch(tr);
+                }
+              }
+            } catch {
+              // Non-blocking — the block is already rendered with items
+            }
+          }
+        },
+      }));
+    return [...commands, ...groupItems];
+  },
+
+  render: () => {
+    let component: ReactRenderer<SlashCommandListRef> | null = null;
+    let popup: HTMLDivElement | null = null;
+
+    const position = (props: SuggestionProps) => {
+      const rect = props.clientRect?.();
+      if (rect && popup) {
+        popup.style.top = `${rect.bottom + window.scrollY + 4}px`;
+        popup.style.left = `${rect.left + window.scrollX}px`;
+      }
+    };
+
+    return {
+      onStart(props: SuggestionProps) {
+        popup = document.createElement('div');
+        popup.style.position = 'absolute';
+        popup.style.zIndex = '9999';
+        document.body.appendChild(popup);
+
+        component = new ReactRenderer(SlashCommandList, {
+          props,
+          editor: props.editor,
+        });
+        popup.appendChild(component.element);
+        position(props);
+      },
+
+      onUpdate(props: SuggestionProps) {
+        component?.updateProps(props);
+        position(props);
+      },
+
+      onKeyDown(props: SuggestionKeyDownProps) {
+        if (props.event.key === 'Escape') {
+          popup?.remove();
+          return true;
+        }
+        return component?.ref?.onKeyDown(props) ?? false;
+      },
+
+      onExit() {
+        component?.destroy();
+        popup?.remove();
+        popup = null;
+        component = null;
+      },
+    };
+  },
+
+  command: ({ editor, range, props: item }: { editor: Editor; range: { from: number; to: number }; props: SlashCommandItem }) => {
+    editor.chain().focus().deleteRange(range).run();
+    item.action(editor);
   },
 };
 
@@ -149,11 +292,16 @@ interface SparkEditorProps {
   onCommentMarkClick?: (threadId: string) => void;
   /** The currently active thread (highlighted in editor) */
   activeThreadId?: string | null;
+  /** Canvas groups for slash command insertion */
+  canvasGroups?: CanvasGroup[];
+  /** All spark items (used to resolve group member details) */
+  sparkItems?: SparkItem[];
 }
 
 export default function SparkEditor({
   onAskAI, initialContent, onContentChange,
   onCommentCreate, onCommentMarkClick, activeThreadId,
+  canvasGroups, sparkItems,
 }: SparkEditorProps) {
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
@@ -165,6 +313,12 @@ export default function SparkEditor({
   // Keep a ref so the onUpdate closure always sees the latest callback
   const onContentChangeRef = useRef(onContentChange);
   onContentChangeRef.current = onContentChange;
+
+  // Sync canvas groups + items into module-level store for slash commands
+  useEffect(() => {
+    _canvasGroups = canvasGroups ?? [];
+    _sparkItems = sparkItems ?? [];
+  }, [canvasGroups, sparkItems]);
 
   const editor = useEditor({
     extensions: [
@@ -187,6 +341,9 @@ export default function SparkEditor({
       // Drawing (custom SVG NodeView)
       DrawingExtension,
 
+      // Group block (canvas group card NodeView)
+      GroupBlockExtension,
+
       // Mentions
       Mention.configure({
         HTMLAttributes: { class: 'mention' },
@@ -195,6 +352,11 @@ export default function SparkEditor({
 
       // Comment marks
       CommentMark,
+
+      // Slash commands
+      SlashCommand.configure({
+        suggestion: slashCommandSuggestion,
+      }),
     ],
     content: initialContent,
     immediatelyRender: false,
@@ -395,12 +557,18 @@ export default function SparkEditor({
             <button
               onMouseDown={(ev) => {
                 ev.preventDefault();
+                ev.stopPropagation();
                 const { from, to } = e.state.selection;
                 const text = e.state.doc.textBetween(from, to, ' ');
                 if (!text.trim()) return;
-                const sel = window.getSelection();
-                if (!sel || sel.rangeCount === 0) return;
-                const rect = sel.getRangeAt(0).getBoundingClientRect();
+                const startCoords = e.view.coordsAtPos(from);
+                const endCoords = e.view.coordsAtPos(to);
+                const rect = new DOMRect(
+                  startCoords.left,
+                  startCoords.top,
+                  endCoords.right - startCoords.left,
+                  endCoords.bottom - startCoords.top,
+                );
                 setCommentPopover({ anchorRect: rect, selectedText: text, from, to });
               }}
               title="Comment on this text"

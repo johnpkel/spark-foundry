@@ -525,6 +525,8 @@ export async function POST(request: NextRequest) {
     // Optional editor context injected by ChatPanel
     selected_text,
     editor_content,
+    // Canvas scoped items — when present, these items ARE the primary context
+    scoped_item_ids,
   } = await request.json();
 
   if (!spark_id || !message) {
@@ -600,14 +602,87 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Retrieve relevant context via RAG
-  const ragContext = await retrieveContext(spark_id, message);
-  addLogEntry({
-    service: 'supabase',
-    direction: 'event',
-    level: 'info',
-    summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
-  });
+  // Retrieve context — scoped to specific items when canvas provides item IDs,
+  // otherwise fall back to broad RAG search across the entire Spark.
+  let ragContext: RetrievedContext;
+
+  if (Array.isArray(scoped_item_ids) && scoped_item_ids.length > 0) {
+    // Fetch the exact items the user selected on the canvas
+    const { data: scopedItems, error: scopedError } = await supabaseAdmin
+      .from('spark_items')
+      .select('id, type, title, content, summary, metadata')
+      .in('id', scoped_item_ids);
+
+    if (scopedError) {
+      console.error('[chat] scoped item fetch error:', scopedError.message);
+    }
+
+    const items = scopedItems || [];
+    const itemTexts = items
+      .map((item, i) => {
+        const meta = item.metadata as Record<string, unknown> | null;
+        const parts: string[] = [`${i + 1}. [${item.type}] ${item.title}`];
+
+        // Content body
+        if (item.content) {
+          parts.push((item.content as string).substring(0, 2000));
+        }
+        if (item.summary) {
+          parts.push(`Summary: ${item.summary}`);
+        }
+
+        // Type-specific metadata enrichment
+        if (meta) {
+          if (meta.url) parts.push(`URL: ${meta.url}`);
+          if (meta.og_description) parts.push(`Description: ${meta.og_description}`);
+          // Slack
+          if (meta.slack_channel_name) parts.push(`Slack channel: #${meta.slack_channel_name}`);
+          if (meta.slack_sender_name) parts.push(`Started by: ${meta.slack_sender_name}`);
+          if (meta.slack_message_count) parts.push(`Messages: ${meta.slack_message_count}`);
+          if (meta.slack_permalink) parts.push(`Permalink: ${meta.slack_permalink}`);
+          // Google Drive
+          if (meta.drive_web_view_link) parts.push(`Drive link: ${meta.drive_web_view_link}`);
+          // Contentstack
+          if (meta.cs_content_type_title) parts.push(`Content Type: ${meta.cs_content_type_title}`);
+          if (meta.cs_stack_name) parts.push(`Stack: ${meta.cs_stack_name}`);
+          if (meta.cs_entry_url) parts.push(`Entry URL: ${meta.cs_entry_url}`);
+          // Tags
+          if (meta.tags && Array.isArray(meta.tags)) parts.push(`Tags: ${(meta.tags as string[]).join(', ')}`);
+        }
+
+        return parts.join('\n');
+      })
+      .join('\n\n');
+
+    ragContext = {
+      text: items.length > 0
+        ? `\n\n## Focused Items (user-selected on canvas)\nThe user is asking specifically about these ${items.length} items. They deliberately selected each one, so you MUST reference every item in your response — include all of them in your Sources section. If an item seems less relevant, still acknowledge it and explain how it relates (or note what it contains). Do not reference other items unless the user asks you to search more broadly.\n\n${itemTexts}`
+        : '',
+      images: extractImageUrls(items as Record<string, unknown>[]),
+      items: items.map((item) => ({
+        id: item.id,
+        type: item.type as VectorContextItem['type'],
+        title: item.title,
+        similarity: 1,
+        summary: (item.summary as string) || null,
+      })),
+    };
+
+    addLogEntry({
+      service: 'supabase',
+      direction: 'event',
+      level: 'info',
+      summary: `Scoped context: ${items.length} item${items.length !== 1 ? 's' : ''} fetched directly`,
+    });
+  } else {
+    ragContext = await retrieveContext(spark_id, message);
+    addLogEntry({
+      service: 'supabase',
+      direction: 'event',
+      level: 'info',
+      summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
+    });
+  }
 
   // ── Editor context (injected by ChatPanel when user has the editor open) ──
   let editorContextSection = '';

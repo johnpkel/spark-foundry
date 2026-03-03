@@ -177,7 +177,7 @@ export default function CommentPopover({
             {filteredMentions.map((item, i) => (
               <button
                 key={item.id}
-                onMouseDown={(e) => { e.preventDefault(); insertMention(item); }}
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); insertMention(item); }}
                 className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
                   i === mentionIdx
                     ? 'bg-venus-purple-light text-venus-purple'

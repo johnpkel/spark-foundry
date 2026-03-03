@@ -16,10 +16,11 @@ const SERVICE_COLORS: Record<LogService, { bg: string; text: string; dot: string
   google:       { bg: 'bg-red-100 dark:bg-red-900/40',         text: 'text-red-800 dark:text-red-200',         dot: 'bg-red-500' },
   slack:        { bg: 'bg-yellow-100 dark:bg-yellow-900/40',   text: 'text-yellow-800 dark:text-yellow-200',   dot: 'bg-yellow-500' },
   clarity:      { bg: 'bg-teal-100 dark:bg-teal-900/40',       text: 'text-teal-800 dark:text-teal-200',       dot: 'bg-teal-500' },
+  lytics:       { bg: 'bg-cyan-100 dark:bg-cyan-900/40',       text: 'text-cyan-800 dark:text-cyan-200',       dot: 'bg-cyan-500' },
   internal:     { bg: 'bg-gray-200 dark:bg-gray-700',          text: 'text-gray-800 dark:text-gray-200',       dot: 'bg-gray-500' },
 };
 
-const ALL_SERVICES: LogService[] = ['anthropic', 'voyage', 'supabase', 'contentstack', 'google', 'slack', 'clarity', 'internal'];
+const ALL_SERVICES: LogService[] = ['anthropic', 'voyage', 'supabase', 'contentstack', 'google', 'slack', 'clarity', 'lytics', 'internal'];
 
 // ─── Helpers ────────────────────────────────────────────
 

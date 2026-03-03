@@ -19,14 +19,17 @@ import DiscussionsPanel from '@/components/DiscussionsPanel';
 import ImageLightbox from '@/components/ImageLightbox';
 import ItemsVectorSpace from '@/components/ItemsVectorSpaceDynamic';
 import SparkEditor from '@/components/SparkEditor';
+import SparkCanvasDynamic from '@/components/canvas/SparkCanvasDynamic';
 import type { CommentSubmitData } from '@/components/CommentPopover';
 import { EditorContextProvider, useEditorContext } from '@/lib/editor-context';
 import type { EditorSelection } from '@/lib/editor-context';
 import type { JSONContent } from '@tiptap/react';
-import type { Spark, SparkItem, GeneratedArtifact, ItemType, WebResearchItem, CommentThread } from '@/lib/types';
+import type { Spark, SparkItem, GeneratedArtifact, ItemType, WebResearchItem, CommentThread, CanvasState } from '@/lib/types';
+import { PenLine, LayoutDashboard } from 'lucide-react';
 
 type LeftTab = 'items' | 'graph' | 'chat' | 'generate';
 type RightTab = 'discussions' | 'scoring';
+type MiddleView = 'editor' | 'canvas';
 
 /** Thin wrapper — provides the editor context that SparkEditor and ChatPanel share */
 export default function SparkWorkspace() {
@@ -55,6 +58,8 @@ function SparkWorkspacePage() {
   const [rightTab, setRightTab] = useState<RightTab>('discussions');
   const [discussions, setDiscussions] = useState<CommentThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [middleView, setMiddleView] = useState<MiddleView>('editor');
+  const [canvasState, setCanvasState] = useState<CanvasState>({ nodePositions: [], groups: [] });
 
   // ── Debounced editor auto-save ─────────────────────
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -95,6 +100,36 @@ function SparkWorkspacePage() {
     }, 1500);
   }, [sparkId]);
 
+  // ── Debounced canvas auto-save ──────────────────
+  const canvasSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const canvasAbortRef = useRef<AbortController>(null);
+
+  const handleCanvasStateChange = useCallback((updated: CanvasState) => {
+    setCanvasState(updated);
+    if (canvasSaveTimerRef.current) clearTimeout(canvasSaveTimerRef.current);
+    canvasSaveTimerRef.current = setTimeout(async () => {
+      canvasAbortRef.current?.abort();
+      const controller = new AbortController();
+      canvasAbortRef.current = controller;
+      try {
+        const currentSpark = sparkRef.current;
+        const merged = { ...(currentSpark?.metadata ?? {}), canvas: updated };
+        const res = await fetch(`/api/sparks/${sparkId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata: merged }),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('save failed');
+        if (currentSpark) {
+          setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+      }
+    }, 1000);
+  }, [sparkId]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -102,6 +137,8 @@ function SparkWorkspacePage() {
       abortRef.current?.abort();
       if (discSaveTimerRef.current) clearTimeout(discSaveTimerRef.current);
       discAbortRef.current?.abort();
+      if (canvasSaveTimerRef.current) clearTimeout(canvasSaveTimerRef.current);
+      canvasAbortRef.current?.abort();
     };
   }, []);
 
@@ -189,6 +226,9 @@ function SparkWorkspacePage() {
         setArtifacts(data.artifacts);
         // Load persisted discussions from metadata
         const savedDiscussions = (data.spark.metadata?.discussions ?? []) as CommentThread[];
+        // Load canvas state from metadata
+        const savedCanvas = (data.spark.metadata?.canvas ?? { nodePositions: [], groups: [] }) as CanvasState;
+        setCanvasState(savedCanvas);
         setDiscussions(savedDiscussions);
       } else {
         router.push('/');
@@ -544,16 +584,57 @@ function SparkWorkspacePage() {
           className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
         />
 
-        {/* Middle column: Tiptap editor */}
+        {/* Middle column: Editor / Canvas */}
         <div className="relative flex-1 flex flex-col min-w-0 bg-surface">
-          <SparkEditor
-            onAskAI={handleAskAI}
-            initialContent={spark.metadata?.editor_content as JSONContent | undefined}
-            onContentChange={handleEditorChange}
-            onCommentCreate={handleCommentCreate}
-            onCommentMarkClick={handleCommentMarkClick}
-            activeThreadId={activeThreadId}
-          />
+          {/* View toggle bar */}
+          <div className="flex items-center gap-0.5 px-3 pt-2 pb-0 shrink-0 border-b border-venus-gray-200 bg-surface">
+            {([
+              { id: 'editor' as MiddleView, icon: PenLine, label: 'Editor' },
+              { id: 'canvas' as MiddleView, icon: LayoutDashboard, label: 'Canvas' },
+            ]).map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                onClick={() => setMiddleView(id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 -mb-px ${
+                  middleView === id
+                    ? 'border-venus-purple text-venus-purple bg-venus-purple-light/50'
+                    : 'border-transparent text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100'
+                }`}
+              >
+                <Icon size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Editor view */}
+          {middleView === 'editor' && (
+            <div className="flex-1 min-h-0 relative">
+              <SparkEditor
+                onAskAI={handleAskAI}
+                initialContent={spark.metadata?.editor_content as JSONContent | undefined}
+                onContentChange={handleEditorChange}
+                onCommentCreate={handleCommentCreate}
+                onCommentMarkClick={handleCommentMarkClick}
+                activeThreadId={activeThreadId}
+                canvasGroups={canvasState.groups}
+                sparkItems={items}
+              />
+            </div>
+          )}
+
+          {/* Canvas view */}
+          {middleView === 'canvas' && (
+            <div className="flex-1 min-h-0">
+              <SparkCanvasDynamic
+                sparkId={sparkId}
+                items={items}
+                canvasState={canvasState}
+                onCanvasStateChange={handleCanvasStateChange}
+              />
+            </div>
+          )}
+
           {/* Save status indicator */}
           {saveStatus !== 'idle' && (
             <div className={`absolute bottom-3 right-3 text-xs px-2.5 py-1 rounded-full pointer-events-none ${
@@ -615,7 +696,7 @@ function SparkWorkspacePage() {
                 onAddReply={handleAddReply}
               />
             ) : (
-              <ScorePanel />
+              <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} />
             )}
           </div>
         </div>

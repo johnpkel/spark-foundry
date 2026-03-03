@@ -283,6 +283,13 @@ export default function ItemCard({ item, onDelete, onItemUpdated, onImageClick }
               </div>
             )}
 
+            {/* Contentstack entry: content type name */}
+            {item.type === 'contentstack_entry' && item.metadata?.cs_content_type_title && (
+              <span className="text-xs text-venus-gray-500">
+                {item.metadata.cs_content_type_title as string}
+              </span>
+            )}
+
             {/* Scraped page images thumbnail row */}
             {isLink && scrapedImages && scrapedImages.length > (ogImage ? 0 : 1) && (
               <div className="flex gap-2 overflow-x-auto mb-2 pb-1 scrollbar-thin">

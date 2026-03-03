@@ -204,6 +204,32 @@ export interface CommentThread {
 }
 
 // ============================================
+// Canvas types
+// ============================================
+
+export interface CanvasNodePosition {
+  itemId: string;
+  x: number;
+  y: number;
+}
+
+export interface CanvasGroup {
+  id: string;
+  name: string;
+  itemIds: string[];
+  color: string;
+  createdAt: string;
+  embedding?: number[] | null;
+  /** Chat session ID for the canonical group conversation */
+  sessionId?: string | null;
+}
+
+export interface CanvasState {
+  nodePositions: CanvasNodePosition[];
+  groups: CanvasGroup[];
+}
+
+// ============================================
 // API request/response types
 // ============================================
 

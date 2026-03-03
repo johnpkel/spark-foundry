@@ -10,9 +10,16 @@ export async function GET() {
   }
 
   try {
-    // listStacks will try org-level listing first, then fall back to user-level
-    const stacks = await listStacks(session.access_token, session.organization_uid);
-    return NextResponse.json({ stacks });
+    const result = await listStacks(session.access_token, session.organization_uid);
+    return NextResponse.json({
+      stacks: result.stacks,
+      _debug: {
+        email: session.email,
+        org_uid: session.organization_uid || null,
+        token_expired: session.expires_at < Date.now(),
+        strategies: result._debug,
+      },
+    });
   } catch (err) {
     console.error('[contentstack/stacks] Error:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';

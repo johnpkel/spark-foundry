@@ -18,6 +18,7 @@ export type LogService =
   | 'google'
   | 'slack'
   | 'clarity'
+  | 'lytics'
   | 'internal';
 
 export type LogDirection = 'request' | 'response' | 'event';

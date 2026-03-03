@@ -130,42 +130,144 @@ async function csGet<T>(
 
 // ─── API Functions ─────────────────────────────
 
+export interface ListStacksResult {
+  stacks: CSStack[];
+  _debug: string[];
+}
+
 export async function listStacks(
   token: string,
   orgUid?: string
-): Promise<CSStack[]> {
+): Promise<ListStacksResult> {
+  const debug: string[] = [];
+
   // Strategy 1: Try GET /v3/stacks with organization_uid header
   if (orgUid) {
     try {
+      debug.push(`S1: GET /v3/stacks with organization_uid=${orgUid}`);
       const data = await csGet<{ stacks: CSStack[] }>(
         '/stacks',
         token,
         undefined,
         { organization_uid: orgUid }
       );
-      return data.stacks || [];
+      debug.push(`S1 result: ${data.stacks?.length ?? 0} stacks`);
+      if (data.stacks?.length) return { stacks: data.stacks, _debug: debug };
     } catch (err) {
-      console.log('[listStacks] Org-level /v3/stacks failed:', (err as Error).message);
+      debug.push(`S1 error: ${(err as Error).message}`);
     }
+  } else {
+    debug.push('S1: skipped (no orgUid in session)');
   }
 
   // Strategy 2: Try GET /v3/stacks without org header
   try {
+    debug.push('S2: GET /v3/stacks (no org header)');
     const data = await csGet<{ stacks: CSStack[] }>('/stacks', token);
-    return data.stacks || [];
+    debug.push(`S2 result: ${data.stacks?.length ?? 0} stacks`);
+    if (data.stacks?.length) return { stacks: data.stacks, _debug: debug };
   } catch (err) {
-    console.log('[listStacks] User-level /v3/stacks failed:', (err as Error).message);
+    debug.push(`S2 error: ${(err as Error).message}`);
   }
 
-  // Strategy 3: Extract stacks from GET /v3/user (always works with OAuth)
-  console.log('[listStacks] Falling back to /v3/user stacks extraction');
-  return listStacksFromUserProfile(token);
+  // Strategy 3: List stacks via the organization-specific endpoint
+  if (orgUid) {
+    try {
+      debug.push(`S3: GET /v3/organizations/${orgUid}/stacks`);
+      const stacks = await listStacksFromOrg(token, orgUid);
+      debug.push(`S3 result: ${stacks.length} stacks`);
+      if (stacks.length) return { stacks, _debug: debug };
+    } catch (err) {
+      debug.push(`S3 error: ${(err as Error).message}`);
+    }
+  } else {
+    debug.push('S3: skipped (no orgUid)');
+  }
+
+  // Strategy 4: Extract stacks from GET /v3/user profile (last resort)
+  try {
+    debug.push('S4: GET /v3/user (profile extraction)');
+    const stacks = await listStacksFromUserProfile(token);
+    debug.push(`S4 result: ${stacks.length} stacks`);
+    return { stacks, _debug: debug };
+  } catch (err) {
+    debug.push(`S4 error: ${(err as Error).message}`);
+    return { stacks: [], _debug: debug };
+  }
+}
+
+/**
+ * List stacks via GET /v3/organizations/{uid}/stacks — the org-scoped endpoint
+ * that works reliably with OAuth tokens that have organization:read scope.
+ */
+async function listStacksFromOrg(token: string, orgUid: string): Promise<CSStack[]> {
+  const url = `${CS_API_BASE}/organizations/${orgUid}/stacks`;
+  const start = Date.now();
+  const correlationId = `cs_${Date.now()}`;
+
+  addLogEntry({
+    service: 'contentstack',
+    direction: 'request',
+    level: 'info',
+    method: 'GET',
+    url,
+    summary: `/organizations/${orgUid}/stacks`,
+    correlationId,
+  });
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const duration = Date.now() - start;
+
+  if (!res.ok) {
+    const text = await res.text();
+    addLogEntry({
+      service: 'contentstack',
+      direction: 'response',
+      level: 'error',
+      method: 'GET',
+      url,
+      summary: `/organizations/${orgUid}/stacks — ${res.status}`,
+      statusCode: res.status,
+      duration,
+      error: text,
+      correlationId,
+    });
+    throw new Error(`CS API /organizations/${orgUid}/stacks failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  addLogEntry({
+    service: 'contentstack',
+    direction: 'response',
+    level: 'info',
+    method: 'GET',
+    url,
+    summary: `/organizations/${orgUid}/stacks — 200`,
+    statusCode: 200,
+    duration,
+    correlationId,
+  });
+
+  const rawStacks = data.stacks || [];
+  return rawStacks.map((s: Record<string, unknown>) => ({
+    api_key: s.api_key as string,
+    name: s.name as string,
+    uid: s.uid as string,
+    org_uid: (s.org_uid as string) || orgUid,
+    master_locale: (s.master_locale as string) || 'en-us',
+  }));
 }
 
 /**
  * Extract stacks from the /v3/user response.
- * The user endpoint returns "details of the stacks owned by and shared with"
- * the user — a reliable fallback when /v3/stacks is forbidden.
+ * Checks multiple locations where Contentstack may nest stack info:
+ * org.stacks[], org.roles[].stack, and top-level user.stacks[].
  */
 async function listStacksFromUserProfile(token: string): Promise<CSStack[]> {
   const res = await fetch(`${CS_API_BASE}/user`, {
@@ -181,35 +283,44 @@ async function listStacksFromUserProfile(token: string): Promise<CSStack[]> {
 
   const data = await res.json();
   const user = data.user;
-
-  // The user response nests stacks under each organization
+  const seen = new Set<string>();
   const stacks: CSStack[] = [];
+
+  function addStack(s: Record<string, unknown>, orgUid: string) {
+    const apiKey = s.api_key as string;
+    if (!apiKey || seen.has(apiKey)) return;
+    seen.add(apiKey);
+    stacks.push({
+      api_key: apiKey,
+      name: (s.name as string) || apiKey,
+      uid: (s.uid as string) || '',
+      org_uid: orgUid,
+      master_locale: (s.master_locale as string) || 'en-us',
+    });
+  }
+
+  // Check organizations[].stacks[] (direct listing)
   if (Array.isArray(user.organizations)) {
     for (const org of user.organizations) {
+      const orgUid = org.uid || '';
       if (Array.isArray(org.stacks)) {
-        for (const stack of org.stacks) {
-          stacks.push({
-            api_key: stack.api_key,
-            name: stack.name,
-            uid: stack.uid,
-            org_uid: org.uid,
-            master_locale: stack.master_locale || 'en-us',
-          });
+        for (const stack of org.stacks) addStack(stack, orgUid);
+      }
+      // Check organizations[].roles[].stack (role-based access)
+      if (Array.isArray(org.roles)) {
+        for (const role of org.roles) {
+          if (role.stack && typeof role.stack === 'object') {
+            addStack(role.stack, orgUid);
+          }
         }
       }
     }
   }
 
-  // Also check top-level stacks array (some responses include it)
-  if (stacks.length === 0 && Array.isArray(user.stacks)) {
+  // Also check top-level stacks array
+  if (Array.isArray(user.stacks)) {
     for (const stack of user.stacks) {
-      stacks.push({
-        api_key: stack.api_key,
-        name: stack.name,
-        uid: stack.uid,
-        org_uid: stack.org_uid || '',
-        master_locale: stack.master_locale || 'en-us',
-      });
+      addStack(stack, (stack.org_uid as string) || '');
     }
   }
 

@@ -428,6 +428,162 @@ body {
   color: var(--venus-gray-600);
 }
 
+/* ── Group block (editor NodeView) ── */
+.group-block {
+  margin: 0.75em 0;
+  background: var(--card-bg);
+  border: 1px solid var(--venus-gray-200);
+  border-left: 4px solid var(--group-color, var(--venus-purple));
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+.group-block--selected {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--group-color, var(--venus-purple)) 35%, transparent);
+}
+
+.group-block__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.6em 0.85em;
+  border-bottom: 1px solid var(--venus-gray-200);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.group-block__badge {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--venus-gray-500);
+  background: var(--venus-gray-100);
+  padding: 0.1em 0.5em;
+  border-radius: 9999px;
+}
+
+.group-block__body {
+  padding: 0.6em 0.85em;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--venus-gray-600);
+}
+
+.group-block__thumbnail {
+  float: right;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--venus-gray-200);
+  margin-left: 0.75em;
+  margin-bottom: 0.25em;
+}
+
+.group-block__empty {
+  font-style: italic;
+  color: var(--venus-gray-400);
+}
+
+.group-block__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.group-block__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35em;
+  padding: 0.2em 0;
+}
+.group-block__item-title {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.group-block__item-type {
+  font-size: 0.6875rem;
+  color: var(--venus-gray-400);
+  text-transform: capitalize;
+}
+.group-block__item-summary {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--venus-gray-500);
+  margin-top: -0.1em;
+}
+
+.group-block__more {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--venus-gray-400);
+  margin-top: 0.3em;
+}
+
+.group-block__footer {
+  border-top: 1px solid var(--venus-gray-200);
+  padding: 0.35em 0.85em;
+}
+.group-block__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--venus-purple);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  transition: background 0.12s ease;
+}
+.group-block__toggle:hover {
+  background: var(--venus-purple-light);
+}
+
+.group-block__conversation {
+  padding: 0.6em 0.85em;
+  border-top: 1px solid var(--venus-gray-200);
+  background: var(--venus-gray-50);
+}
+.group-block__conversation-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--venus-gray-400);
+  margin-bottom: 0.4em;
+}
+.group-block__quote {
+  border-left: 3px solid var(--venus-purple);
+  padding-left: 0.75em;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--venus-gray-600);
+  white-space: pre-wrap;
+}
+.group-block__loading {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font-size: 0.75rem;
+  color: var(--venus-gray-400);
+}
+
+/* ── Slash command popup ── */
+.slash-command-list {
+  animation: bubbleIn 0.1s ease;
+}
+.slash-command-list::-webkit-scrollbar {
+  width: 4px;
+}
+.slash-command-list::-webkit-scrollbar-thumb {
+  background: var(--venus-gray-300);
+  border-radius: 2px;
+}
+
 /* ── Bubble menu ── */
 .tiptap-bubble-menu {
   display: flex;
@@ -492,4 +648,55 @@ body {
 .dark textarea:focus,
 .dark select:focus {
   border-color: var(--venus-purple);
+}
+
+/* ═══════════════════════════════════════════════
+   Spark Canvas — React Flow
+   ═══════════════════════════════════════════════ */
+.react-flow__node-sparkItem {
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+.react-flow__node.selected .spark-canvas-node {
+  border-color: var(--venus-purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--venus-purple) 30%, transparent);
+}
+.react-flow__node-columnHeader {
+  padding: 0;
+  background: none;
+  border: none;
+  pointer-events: none;
+}
+.canvas-group-box {
+  border: 2px dashed;
+  border-radius: 12px;
+  padding: 32px 12px 12px;
+  min-width: 60px;
+  min-height: 60px;
+  position: relative;
+}
+.canvas-floating-chat {
+  width: 360px;
+  height: 440px;
+  z-index: 50;
+}
+/* React Flow dark mode overrides */
+.dark .react-flow__background {
+  background: var(--surface);
+}
+.dark .react-flow__minimap {
+  background: var(--venus-gray-100);
+}
+.dark .react-flow__controls button {
+  background: var(--venus-gray-100);
+  border-color: var(--venus-gray-300);
+  color: var(--foreground);
+}
+.dark .react-flow__controls button:hover {
+  background: var(--venus-gray-200);
+}
+.dark .react-flow__panel {
+  color: var(--foreground);
 }
