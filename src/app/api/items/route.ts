@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import {
   generateEmbedding,
@@ -45,33 +45,41 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Schedule background enrichment work via after() so the serverless
+  // runtime stays alive until it completes (fire-and-forget promises get
+  // killed once the response is sent on platforms like Vercel).
   if (type === 'link' && content) {
-    // For link items: scrape first, then embed the rich content
-    scrapeAndEnrich(data.id, title, content, enrichedMetadata).catch((err) => {
-      console.error('[items] scrapeAndEnrich failed:', err);
+    after(async () => {
+      try {
+        await scrapeAndEnrich(data.id, title, content, enrichedMetadata);
+      } catch (err) {
+        console.error('[items] scrapeAndEnrich failed:', err);
+      }
     });
   } else if (type === 'google_drive' && enrichedMetadata.drive_file_id) {
-    // For Drive items: export content in background, then embed
-    exportDriveAndEnrich(
-      data.id,
-      title,
-      enrichedMetadata.drive_file_id as string,
-      enrichedMetadata.drive_mime_type as string,
-      enrichedMetadata
-    ).catch((err) => {
-      console.error('[items] exportDriveAndEnrich failed:', err);
+    after(async () => {
+      try {
+        await exportDriveAndEnrich(
+          data.id,
+          title,
+          enrichedMetadata.drive_file_id as string,
+          enrichedMetadata.drive_mime_type as string,
+          enrichedMetadata
+        );
+      } catch (err) {
+        console.error('[items] exportDriveAndEnrich failed:', err);
+      }
     });
   } else {
-    // For non-link items: embed immediately (existing behavior)
-    const itemData = { title, content, type, metadata: enrichedMetadata };
-    const imageUrl = getImageUrl(itemData);
+    after(async () => {
+      try {
+        const itemData = { title, content, type, metadata: enrichedMetadata };
+        const imageUrl = getImageUrl(itemData);
 
-    const embeddingPromise = imageUrl
-      ? generateImageEmbedding(imageUrl, buildItemText(itemData))
-      : generateEmbedding(buildItemText(itemData));
+        const embedding = imageUrl
+          ? await generateImageEmbedding(imageUrl, buildItemText(itemData))
+          : await generateEmbedding(buildItemText(itemData));
 
-    embeddingPromise
-      .then(async (embedding) => {
         if (embedding && data) {
           const { error: updateError } = await supabaseAdmin
             .from('spark_items')
@@ -81,10 +89,10 @@ export async function POST(request: NextRequest) {
             console.error('[items] Failed to save embedding:', updateError.message);
           }
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('[items] Embedding generation failed:', err);
-      });
+      }
+    });
   }
 
   return NextResponse.json(data, { status: 201 });

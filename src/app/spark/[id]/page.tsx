@@ -19,6 +19,8 @@ import DiscussionsPanel from '@/components/DiscussionsPanel';
 import ImageLightbox from '@/components/ImageLightbox';
 import ItemsVectorSpace from '@/components/ItemsVectorSpaceDynamic';
 import SparkEditor from '@/components/SparkEditor';
+import PresenceAvatars from '@/components/PresenceAvatars';
+import type { CollabUser } from '@/components/PresenceAvatars';
 import SparkCanvasDynamic from '@/components/canvas/SparkCanvasDynamic';
 import type { CommentSubmitData } from '@/components/CommentPopover';
 import { EditorContextProvider, useEditorContext } from '@/lib/editor-context';
@@ -60,6 +62,9 @@ function SparkWorkspacePage() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [middleView, setMiddleView] = useState<MiddleView>('editor');
   const [canvasState, setCanvasState] = useState<CanvasState>({ nodePositions: [], groups: [] });
+  const [collabUsers, setCollabUsers] = useState<CollabUser[]>([]);
+  const [localClientId, setLocalClientId] = useState<number | null>(null);
+  const [collabNameOverride, setCollabNameOverride] = useState<string | undefined>(undefined);
 
   // ── Debounced editor auto-save ─────────────────────
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -347,6 +352,16 @@ function SparkWorkspacePage() {
     setRightTab('discussions');
   }, []);
 
+  // ── Collaboration presence ────────────────────────
+  const handlePresenceChange = useCallback((users: CollabUser[], clientId: number) => {
+    setCollabUsers(users);
+    setLocalClientId(clientId);
+  }, []);
+
+  const handleCollabNameChange = useCallback((name: string) => {
+    setCollabNameOverride(name);
+  }, []);
+
   // ── Tab config ──────────────────────────────────────
   const tabConfig: { id: LeftTab; icon: typeof LayoutGrid; label: string; count?: number }[] = [
     { id: 'items', icon: LayoutGrid, label: 'Items', count: items.length + researchItems.length || undefined },
@@ -387,6 +402,11 @@ function SparkWorkspacePage() {
               <p className="text-sm text-venus-gray-500 truncate">{spark.description}</p>
             )}
           </div>
+          <PresenceAvatars
+            users={collabUsers}
+            localClientId={localClientId}
+            onNameChange={handleCollabNameChange}
+          />
           <IntegrationsStatus />
           <button
             onClick={() => setLeftTab('generate')}
@@ -611,6 +631,7 @@ function SparkWorkspacePage() {
           {middleView === 'editor' && (
             <div className="flex-1 min-h-0 relative">
               <SparkEditor
+                sparkId={sparkId}
                 onAskAI={handleAskAI}
                 initialContent={spark.metadata?.editor_content as JSONContent | undefined}
                 onContentChange={handleEditorChange}
@@ -619,6 +640,8 @@ function SparkWorkspacePage() {
                 activeThreadId={activeThreadId}
                 canvasGroups={canvasState.groups}
                 sparkItems={items}
+                onPresenceChange={handlePresenceChange}
+                collabNameOverride={collabNameOverride}
               />
             </div>
           )}

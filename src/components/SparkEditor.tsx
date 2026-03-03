@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, ReactRenderer, type JSONContent } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
+import { NodeSelection } from '@tiptap/pm/state';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { useEditorContext } from '@/lib/editor-context';
 import type { EditorSelection } from '@/lib/editor-context';
@@ -13,10 +14,15 @@ import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Mention from '@tiptap/extension-mention';
+import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursorExtension from './editor/CollaborationCursorExtension';
+import { TiptapCollabProvider } from '@tiptap-pro/provider';
+import * as Y from 'yjs';
+import type { CollabUser } from './PresenceAvatars';
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion';
 import {
   Bold, Italic, Strikethrough, Code, Heading1, Heading2, Heading3,
-  List, ListOrdered, Quote, Minus, Undo, Redo, CheckSquare,
+  List, ListOrdered, Quote, Minus, CheckSquare,
   ImageIcon, Table2, Pencil, Sparkles, MessageSquareText, Layers,
 } from 'lucide-react';
 import type { CanvasGroup, SparkItem } from '@/lib/types';
@@ -31,6 +37,31 @@ import type { MentionListRef, MentionItem } from './editor/MentionList';
 import SlashCommand from './editor/SlashCommand';
 import SlashCommandList, { filterSlashCommands } from './editor/SlashCommandList';
 import type { SlashCommandListRef, SlashCommandItem } from './editor/SlashCommandList';
+
+// ─── Collaboration color palette ──────────────────────────
+const COLLAB_COLORS = [
+  '#e06c75', // soft red
+  '#61afef', // sky blue
+  '#e5c07b', // amber
+  '#56b6c2', // teal
+  '#c678dd', // violet
+  '#98c379', // green
+  '#d19a66', // orange
+  '#be5046', // rust
+];
+
+function getCollabColor(index: number) {
+  return COLLAB_COLORS[index % COLLAB_COLORS.length];
+}
+
+function getStoredName(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('spark-collab-name');
+}
+
+function setStoredName(name: string) {
+  if (typeof window !== 'undefined') localStorage.setItem('spark-collab-name', name);
+}
 
 // ─── Module-level mutable store for slash command groups ──
 // TipTap's Suggestion plugin captures `items` once at init. These
@@ -280,6 +311,8 @@ interface CommentPopoverState {
 }
 
 interface SparkEditorProps {
+  /** Spark ID — used as the collaborative document name */
+  sparkId: string;
   /** Called when the user clicks "Ask AI" on a selection in the bubble menu */
   onAskAI?: (sel: EditorSelection) => void;
   /** Initial TipTap JSON document to restore on mount */
@@ -296,12 +329,16 @@ interface SparkEditorProps {
   canvasGroups?: CanvasGroup[];
   /** All spark items (used to resolve group member details) */
   sparkItems?: SparkItem[];
+  /** Fires when the set of connected collaborators changes */
+  onPresenceChange?: (users: CollabUser[], localClientId: number) => void;
+  /** Called to update the local user's display name (from parent) */
+  collabNameOverride?: string;
 }
 
 export default function SparkEditor({
-  onAskAI, initialContent, onContentChange,
+  sparkId, onAskAI, initialContent, onContentChange,
   onCommentCreate, onCommentMarkClick, activeThreadId,
-  canvasGroups, sparkItems,
+  canvasGroups, sparkItems, onPresenceChange, collabNameOverride,
 }: SparkEditorProps) {
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
@@ -320,9 +357,95 @@ export default function SparkEditor({
     _sparkItems = sparkItems ?? [];
   }, [canvasGroups, sparkItems]);
 
+  // ── Yjs document + TipTap Cloud provider ───────────
+  // Y.Doc is created synchronously via useState so it's available on the
+  // very first render when useEditor reads the extensions array.
+  const [ydoc] = useState(() => new Y.Doc());
+  const initialContentRef = useRef(initialContent);
+  const editorInstanceRef = useRef<Editor | null>(null);
+  const [provider, setProvider] = useState<TiptapCollabProvider | null>(null);
+
+  // Keep a ref to the latest onPresenceChange callback
+  const onPresenceChangeRef = useRef(onPresenceChange);
+  onPresenceChangeRef.current = onPresenceChange;
+
+  useEffect(() => {
+    const docName = `spark-${sparkId}`;
+
+    const p = new TiptapCollabProvider({
+      appId: process.env.NEXT_PUBLIC_TIPTAP_APP_ID!,
+      name: docName,
+      document: ydoc,
+      token: async () => {
+        const res = await fetch(`/api/collab-token?docName=${encodeURIComponent(docName)}`);
+        const data = await res.json();
+        return data.token as string;
+      },
+      onSynced() {
+        // If the Yjs doc came back empty (first ever open), seed it with
+        // the initialContent stored in Supabase metadata.
+        const yXmlFragment = ydoc.getXmlFragment('default');
+        if (yXmlFragment.length === 0 && initialContentRef.current) {
+          setTimeout(() => {
+            const ed = editorInstanceRef.current;
+            if (ed && !ed.isDestroyed) {
+              ed.commands.setContent(initialContentRef.current!);
+            }
+          }, 50);
+        }
+      },
+    });
+
+    setProvider(p);
+
+    // Set local user awareness state once connected
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const awareness = (p as any).awareness! as import('y-protocols/awareness').Awareness;
+    const localIndex = awareness.clientID % COLLAB_COLORS.length;
+    const defaultName = getStoredName() || `User ${(localIndex % 99) + 1}`;
+    const color = getCollabColor(localIndex);
+    awareness.setLocalStateField('user', { name: defaultName, color });
+
+    // Broadcast presence changes to parent
+    const handleAwarenessChange = () => {
+      const states = awareness.getStates() as Map<number, { user?: { name: string; color: string } }>;
+      const users: CollabUser[] = [];
+      states.forEach((state, clientId) => {
+        if (state.user) {
+          users.push({ clientId, name: state.user.name, color: state.user.color });
+        }
+      });
+      onPresenceChangeRef.current?.(users, awareness.clientID);
+    };
+    awareness.on('change', handleAwarenessChange);
+    // Fire once immediately to pick up existing peers
+    handleAwarenessChange();
+
+    return () => {
+      awareness.off('change', handleAwarenessChange);
+      p.destroy();
+      setProvider(null);
+    };
+  }, [sparkId, ydoc]);
+
+  // Update local awareness name when parent sends a name override
+  useEffect(() => {
+    if (!provider || !collabNameOverride) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const awareness = (provider as any).awareness! as import('y-protocols/awareness').Awareness;
+    const current = (awareness.getLocalState() as { user?: { name: string; color: string } })?.user;
+    if (current && current.name !== collabNameOverride) {
+      awareness.setLocalStateField('user', { ...current, name: collabNameOverride });
+      setStoredName(collabNameOverride);
+    }
+  }, [provider, collabNameOverride]);
+
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        // Disable built-in undo/redo — Yjs provides its own undo manager
+        undoRedo: false,
+      }),
       Placeholder.configure({ placeholder: 'Start writing…' }),
 
       // Images
@@ -357,8 +480,35 @@ export default function SparkEditor({
       SlashCommand.configure({
         suggestion: slashCommandSuggestion,
       }),
+
+      // Real-time collaboration via Yjs CRDT
+      Collaboration.configure({ document: ydoc }),
+
+      // Remote cursors + selections via Yjs awareness
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(provider ? [CollaborationCursorExtension.configure({
+        awareness: (provider as any).awareness! as import('y-protocols/awareness').Awareness,
+        user: ((provider as any).awareness!.getLocalState() as { user?: { name: string; color: string } })?.user ?? {
+          name: 'Anonymous',
+          color: COLLAB_COLORS[0],
+        },
+        render(user: { name: string; color: string }) {
+          const cursor = document.createElement('span');
+          cursor.classList.add('collaboration-cursor__caret');
+          cursor.style.setProperty('--cursor-color', user.color);
+          cursor.style.borderColor = user.color;
+
+          const label = document.createElement('span');
+          label.classList.add('collaboration-cursor__label');
+          label.style.setProperty('--cursor-color', user.color);
+          label.style.backgroundColor = user.color;
+          label.textContent = user.name;
+          cursor.appendChild(label);
+
+          return cursor;
+        },
+      })] : []),
     ],
-    content: initialContent,
     immediatelyRender: false,
     editorProps: {
       attributes: { class: 'spark-editor-content focus:outline-none' },
@@ -366,7 +516,13 @@ export default function SparkEditor({
     onUpdate({ editor: ed }) {
       onContentChangeRef.current?.(ed.getJSON());
     },
-  });
+    onCreate({ editor: ed }) {
+      editorInstanceRef.current = ed;
+    },
+    onDestroy() {
+      editorInstanceRef.current = null;
+    },
+  }, [provider]);
 
   const insertImage = useCallback(() => {
     const url = imageUrl.trim();
@@ -389,10 +545,13 @@ export default function SparkEditor({
     return () => ctx?.setEditor(null);
   }, [editor, ctx]);
 
-  // Toggle .active class on comment marks when activeThreadId changes
+  // Toggle .active class on comment marks when activeThreadId changes.
+  // Guard: editor.view may not be available yet if the editor was just
+  // recreated (e.g. when provider changes) and EditorContent hasn't mounted.
   useEffect(() => {
     if (!editor) return;
-    const el = editor.view.dom;
+    let el: HTMLElement;
+    try { el = editor.view.dom; } catch { return; }
     el.querySelectorAll('.comment-mark.active').forEach(node => node.classList.remove('active'));
     if (activeThreadId) {
       el.querySelectorAll(`[data-thread-id="${activeThreadId}"]`).forEach(node => node.classList.add('active'));
@@ -411,10 +570,20 @@ export default function SparkEditor({
   // Handle comment popover submit
   const handleCommentSubmit = useCallback((data: CommentSubmitData) => {
     if (!editor) return;
-    editor.chain()
-      .setTextSelection({ from: data.from, to: data.to })
-      .setComment(data.threadId)
-      .run();
+
+    // Check if the selection covers an atom node (e.g. groupBlock).
+    // Marks can't be applied to atom nodes, so skip the mark but still
+    // create the discussion thread.
+    const node = editor.state.doc.nodeAt(data.from);
+    const isAtom = node?.type.spec.atom === true;
+
+    if (!isAtom) {
+      editor.chain()
+        .setTextSelection({ from: data.from, to: data.to })
+        .setComment(data.threadId)
+        .run();
+    }
+
     setCommentPopover(null);
     onCommentCreate?.(data);
   }, [editor, onCommentCreate]);
@@ -427,12 +596,6 @@ export default function SparkEditor({
 
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center flex-wrap gap-0.5 px-3 py-2 border-b border-venus-gray-200 bg-surface">
-
-        {/* History */}
-        <ToolbarBtn icon={Undo} label="Undo" onClick={() => e.chain().focus().undo().run()} disabled={!e.can().undo()} />
-        <ToolbarBtn icon={Redo} label="Redo" onClick={() => e.chain().focus().redo().run()} disabled={!e.can().redo()} />
-
-        <Sep />
 
         {/* Inline format */}
         <ToolbarBtn icon={Bold}          label="Bold"          onClick={() => e.chain().focus().toggleBold().run()}          active={e.isActive('bold')} />
@@ -558,9 +721,20 @@ export default function SparkEditor({
               onMouseDown={(ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                const { from, to } = e.state.selection;
-                const text = e.state.doc.textBetween(from, to, ' ');
+                const sel = e.state.selection;
+                const { from, to } = sel;
+
+                // For atom nodes (e.g. groupBlock), extract a label
+                // from node attrs since textBetween returns empty.
+                let text: string;
+                if (sel instanceof NodeSelection && sel.node.type.spec.atom) {
+                  const node = sel.node;
+                  text = node.attrs.groupName || node.attrs.title || node.type.name;
+                } else {
+                  text = e.state.doc.textBetween(from, to, ' ');
+                }
                 if (!text.trim()) return;
+
                 const startCoords = e.view.coordsAtPos(from);
                 const endCoords = e.view.coordsAtPos(to);
                 const rect = new DOMRect(
