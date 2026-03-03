@@ -9,6 +9,8 @@
  * so the app still works without RAG.
  */
 
+import { addLogEntry } from './activity-logger';
+
 const VOYAGE_MULTIMODAL_URL = 'https://api.voyageai.com/v1/multimodalembeddings';
 const VOYAGE_MODEL = 'voyage-multimodal-3';
 const EMBEDDING_DIMENSIONS = 1024;
@@ -41,6 +43,20 @@ async function callMultimodalAPI(
   const apiKey = getApiKey();
   if (!apiKey) return inputs.map(() => null);
 
+  const start = Date.now();
+  const correlationId = `voyage_${Date.now()}`;
+
+  addLogEntry({
+    service: 'voyage',
+    direction: 'request',
+    level: 'info',
+    method: 'POST',
+    url: VOYAGE_MULTIMODAL_URL,
+    summary: `embed ${inputType} (${inputs.length} item${inputs.length !== 1 ? 's' : ''})`,
+    requestBody: { inputCount: inputs.length, inputType, model: VOYAGE_MODEL },
+    correlationId,
+  });
+
   const response = await fetch(VOYAGE_MULTIMODAL_URL, {
     method: 'POST',
     headers: {
@@ -54,8 +70,22 @@ async function callMultimodalAPI(
     }),
   });
 
+  const duration = Date.now() - start;
+
   if (!response.ok) {
     const error = await response.text();
+    addLogEntry({
+      service: 'voyage',
+      direction: 'response',
+      level: 'error',
+      method: 'POST',
+      url: VOYAGE_MULTIMODAL_URL,
+      summary: `embed ${inputType} — ${response.status}`,
+      statusCode: response.status,
+      duration,
+      error,
+      correlationId,
+    });
     console.error('[embeddings] Voyage AI multimodal error:', response.status, error);
     return inputs.map(() => null);
   }
@@ -63,6 +93,19 @@ async function callMultimodalAPI(
   const result = await response.json();
   const data = result.data as { embedding: number[]; index: number }[];
   data.sort((a, b) => a.index - b.index);
+
+  addLogEntry({
+    service: 'voyage',
+    direction: 'response',
+    level: 'info',
+    method: 'POST',
+    url: VOYAGE_MULTIMODAL_URL,
+    summary: `embed ${inputType} — 200 (${data.length} embedding${data.length !== 1 ? 's' : ''}, ${data[0]?.embedding?.length ?? EMBEDDING_DIMENSIONS}d)`,
+    statusCode: 200,
+    duration,
+    correlationId,
+  });
+
   return data.map((d) => d.embedding);
 }
 
@@ -166,6 +209,18 @@ export function buildItemText(item: {
   if (meta?.url) {
     parts.push(`URL: ${meta.url}`);
   }
+  if (meta?.cs_content_type_title) {
+    parts.push(`Content Type: ${meta.cs_content_type_title}`);
+  }
+  if (meta?.cs_stack_name) {
+    parts.push(`Stack: ${meta.cs_stack_name}`);
+  }
+  if (meta?.clarity_metric_name) {
+    parts.push(`Clarity Metric: ${meta.clarity_metric_name}`);
+  }
+  if (meta?.clarity_dimensions) {
+    parts.push(`Dimensions: ${meta.clarity_dimensions}`);
+  }
 
   return parts.join('\n');
 }
@@ -200,6 +255,17 @@ export function getImageUrl(item: {
     const url = meta.drive_thumbnail_url as string;
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
+    }
+  }
+
+  // For Contentstack assets, use asset URL if it's an image
+  if (item.type === 'contentstack_asset' && meta?.cs_asset_url) {
+    const mimeType = meta.cs_asset_content_type as string | undefined;
+    if (mimeType?.startsWith('image/')) {
+      const url = meta.cs_asset_url as string;
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+      }
     }
   }
 

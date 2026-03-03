@@ -137,16 +137,39 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const { data, error } = await supabaseAdmin
-    .from('spark_items')
-    .select('id, type, title, summary, embedding')
-    .eq('spark_id', id)
-    .not('embedding', 'is', null)
-    .order('created_at', { ascending: false });
+  // Fetch spark items and web research items in parallel
+  const [sparkItemsResult, joinResult] = await Promise.all([
+    supabaseAdmin
+      .from('spark_items')
+      .select('id, type, title, summary, embedding')
+      .eq('spark_id', id)
+      .not('embedding', 'is', null)
+      .order('created_at', { ascending: false }),
+    supabaseAdmin
+      .from('spark_web_research')
+      .select('web_research_item_id')
+      .eq('spark_id', id),
+  ]);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (sparkItemsResult.error) {
+    return NextResponse.json({ error: sparkItemsResult.error.message }, { status: 500 });
   }
+
+  // Fetch web research items with embeddings (if any linked)
+  let researchData: typeof sparkItemsResult.data = [];
+  const joinIds = joinResult.data?.map((r) => r.web_research_item_id) || [];
+  if (joinIds.length > 0) {
+    const { data: rd } = await supabaseAdmin
+      .from('web_research_items')
+      .select('id, title, summary, embedding')
+      .in('id', joinIds)
+      .not('embedding', 'is', null);
+    if (rd) {
+      researchData = rd.map((r) => ({ ...r, type: 'web_research' }));
+    }
+  }
+
+  const data = [...(sparkItemsResult.data || []), ...researchData];
 
   if (!data || data.length === 0) {
     return NextResponse.json({ items: [], edges: [] });

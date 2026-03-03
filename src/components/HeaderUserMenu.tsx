@@ -77,8 +77,8 @@ export default function HeaderUserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-lg border border-venus-gray-200 shadow-lg py-2 z-50">
-          <div className="px-4 py-2 border-b border-venus-gray-100">
+        <div className="absolute right-0 top-full mt-1 w-64 bg-card-bg rounded-lg border border-venus-gray-200 shadow-lg py-2 z-50">
+          <div className="px-4 py-2 border-b border-venus-gray-200">
             <p className="text-sm font-medium text-venus-gray-700 truncate">
               {session.display_name}
             </p>

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider, ThemeToggle } from "@/components/ThemeProvider";
+import HeaderUserMenu from "@/components/HeaderUserMenu";
+import { ActivityLogProvider } from "@/components/ActivityLogProvider";
+import { ActivityLogButton } from "@/components/ActivityLogPanel";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -46,6 +49,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider>
+          <ActivityLogProvider>
           <div className="min-h-screen flex flex-col">
             {/* Top Navigation Bar */}
             <header className="h-14 bg-surface border-b border-venus-gray-200 flex items-center px-6 shrink-0">
@@ -58,7 +62,8 @@ export default function RootLayout({
                 <h1 className="text-lg font-semibold text-venus-gray-700">Spark Foundry</h1>
               </div>
               <div className="ml-auto flex items-center gap-3">
-                <span className="text-sm text-venus-gray-500">for Contentstack DXP</span>
+                <HeaderUserMenu />
+                <ActivityLogButton />
                 <ThemeToggle />
               </div>
             </header>
@@ -68,6 +73,7 @@ export default function RootLayout({
               {children}
             </main>
           </div>
+          </ActivityLogProvider>
         </ThemeProvider>
       </body>
     </html>

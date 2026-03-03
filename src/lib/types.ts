@@ -3,7 +3,7 @@
 // ============================================
 
 export type SparkStatus = 'active' | 'archived';
-export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note' | 'google_drive' | 'slack_message';
+export type ItemType = 'link' | 'image' | 'text' | 'file' | 'note' | 'google_drive' | 'slack_message' | 'contentstack_entry' | 'contentstack_asset' | 'clarity_insight';
 export type ChatRole = 'user' | 'assistant' | 'system';
 export type ArtifactType = 'cms_entry' | 'campaign_brief' | 'custom';
 export type ArtifactStatus = 'draft' | 'published' | 'archived';
@@ -61,6 +61,24 @@ export interface SparkItemMetadata {
   slack_message_count?: number;
   slack_permalink?: string;
   slack_sender_name?: string;
+  // Contentstack fields
+  cs_stack_api_key?: string;
+  cs_stack_name?: string;
+  cs_content_type_uid?: string;
+  cs_content_type_title?: string;
+  cs_entry_uid?: string;
+  cs_entry_locale?: string;
+  cs_entry_url?: string;
+  cs_asset_uid?: string;
+  cs_asset_url?: string;
+  cs_asset_content_type?: string; // MIME type
+  cs_asset_file_size?: number;
+  cs_asset_filename?: string;
+  // Microsoft Clarity fields
+  clarity_metric_name?: string;
+  clarity_dimensions?: string;
+  clarity_num_days?: number;
+  clarity_imported_at?: string;
   [key: string]: unknown;
 }
 
@@ -131,15 +149,58 @@ export interface CampaignBriefContent {
 }
 
 // ============================================
+// Web Research types
+// ============================================
+
+export interface WebResearchSource {
+  url: string;
+  title: string;
+  snippet?: string;
+}
+
+export interface WebResearchItem {
+  id: string;
+  title: string;
+  query: string;
+  content: string;
+  summary: string | null;
+  sources: WebResearchSource[];
+  metadata: Record<string, unknown>;
+  embedding?: number[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
 // Vector visualization types
 // ============================================
 
 export interface VectorContextItem {
   id: string;
-  type: ItemType;
+  type: ItemType | 'web_research';
   title: string;
   similarity: number;
   summary: string | null;
+}
+
+// ============================================
+// Editor commenting / discussions
+// ============================================
+
+export interface ThreadComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  content: string; // plain text with @Name mentions
+  createdAt: string;
+}
+
+export interface CommentThread {
+  id: string;
+  selectedText: string; // quoted text snapshot
+  resolved: boolean;
+  createdAt: string;
+  comments: ThreadComment[]; // first = original, rest = replies
 }
 
 // ============================================

@@ -201,7 +201,7 @@ export async function getTokens(): Promise<TokenData | null> {
   try {
     const tokenData: TokenData = JSON.parse(await decrypt(cookie.value));
 
-    // If token expires within 5 minutes, refresh it
+    // If token expires within 5 minutes, proactively refresh it
     if (tokenData.expires_at < Date.now() + 5 * 60 * 1000) {
       try {
         const refreshed = await refreshAccessToken(tokenData.refresh_token);
@@ -218,8 +218,12 @@ export async function getTokens(): Promise<TokenData | null> {
           path: '/',
         });
       } catch {
-        // Refresh failed — token is invalid
-        return null;
+        // Refresh failed — only log out if the access token is actually expired.
+        // A transient network error shouldn't invalidate a still-valid token.
+        if (tokenData.expires_at < Date.now()) {
+          return null;
+        }
+        // Access token still valid — return as-is (refresh will retry next call)
       }
     }
 

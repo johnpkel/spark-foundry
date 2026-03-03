@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { generateQueryEmbedding } from '@/lib/embeddings';
+import { generateQueryEmbedding, generateEmbedding } from '@/lib/embeddings';
+import { scrapePage } from '@/lib/scraper';
+import { addLogEntry } from '@/lib/activity-logger';
 import type { VectorContextItem } from '@/lib/types';
 
 const anthropic = new Anthropic();
@@ -14,6 +16,8 @@ const SYSTEM_PROMPT = `You are Spark Assistant, an AI helper for the Spark Found
 - Identify patterns, connections, and insights across items
 - Help generate business artifacts like Contentstack CMS entries and Campaign Briefs
 - Summarize content and provide recommendations
+- **Research topics on the web** using web_search and scrape_url tools
+- **Save research findings** for future reference using save_web_research
 
 ## Guidelines
 - Use the semantic_search tool when you need to find items related to a specific topic
@@ -22,7 +26,22 @@ const SYSTEM_PROMPT = `You are Spark Assistant, an AI helper for the Spark Found
 - For Campaign Briefs, include: objective, target audience, key messages, channels, timeline, KPIs
 - Keep responses concise but thorough
 - Format responses in Markdown for readability
-- If you're unsure about something, say so rather than making assumptions`;
+- If you're unsure about something, say so rather than making assumptions
+
+## Citations
+- When your answer draws on items from the Spark, **always cite your sources** at the end of your response
+- Use a "Sources" section with a bulleted list
+- For each source, include the item title and type in brackets, e.g.: \`- **[Link] Article Title** — brief reason it's relevant\`
+- If the item has a URL (links, Drive files, Slack messages, web research), include it as a markdown hyperlink: \`- **[Link] [Article Title](url)** — key point used\`
+- Cite every distinct item you relied on, even if only for background context
+- If your answer is purely from your own knowledge and no Spark items were used, omit the Sources section
+
+## Web Research Guidelines
+- Use the **web_search** tool for broad research queries to discover relevant pages, articles, and data
+- Use the **scrape_url** tool to deep-read specific URLs when you need detailed content from a page
+- After researching a topic, **always call save_web_research** to persist your findings — this makes the research available in future conversations via RAG context
+- Write a clear, synthesized markdown summary in the research content (not just raw scraped text)
+- Include all source URLs with titles in the sources array`;
 
 // Tool definitions for the Anthropic API
 const TOOLS: Anthropic.Tool[] = [
@@ -72,7 +91,54 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['spark_id'],
     },
   },
+  {
+    name: 'scrape_url',
+    description: 'Deep-read a specific webpage to extract its full text content, title, and description. Use this when you need detailed content from a known URL.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        url: { type: 'string', description: 'The URL to scrape' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'save_web_research',
+    description: 'Save web research findings to the Spark for future reference. Always call this after completing web research to persist the findings.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        title: { type: 'string', description: 'Descriptive title for the research' },
+        query: { type: 'string', description: 'The original research question' },
+        content: { type: 'string', description: 'Synthesized markdown research content' },
+        summary: { type: 'string', description: 'Short summary (1-2 sentences) for quick reference' },
+        sources: {
+          type: 'array',
+          description: 'Array of source URLs with titles',
+          items: {
+            type: 'object',
+            properties: {
+              url: { type: 'string' },
+              title: { type: 'string' },
+              snippet: { type: 'string' },
+            },
+            required: ['url', 'title'],
+          },
+        },
+        spark_id: { type: 'string', description: 'The Spark ID to link this research to' },
+      },
+      required: ['title', 'query', 'content', 'summary', 'sources', 'spark_id'],
+    },
+  },
 ];
+
+// Combined tools: our custom tools + Anthropic's server-hosted web_search
+const WEB_SEARCH_TOOL: Anthropic.WebSearchTool20250305 = {
+  type: 'web_search_20250305',
+  name: 'web_search',
+  max_uses: 10,
+};
+const ALL_TOOLS: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] = [...TOOLS, WEB_SEARCH_TOOL];
 
 const MAX_IMAGES_PER_RESULT = 5;
 
@@ -137,14 +203,16 @@ function buildToolContent(
 // Execute a tool call and return multimodal content (text + images)
 async function executeTool(
   name: string,
-  input: Record<string, string>
+  input: Record<string, unknown>
 ): Promise<Anthropic.ToolResultBlockParam['content']> {
   switch (name) {
     case 'semantic_search': {
-      const queryEmbedding = await generateQueryEmbedding(input.query);
+      const query = input.query as string;
+      const sparkId = input.spark_id as string;
+      const queryEmbedding = await generateQueryEmbedding(query);
       if (queryEmbedding) {
         const { data, error } = await supabaseAdmin.rpc('match_spark_items', {
-          p_spark_id: input.spark_id,
+          p_spark_id: sparkId,
           query_embedding: JSON.stringify(queryEmbedding),
           match_threshold: 0.3,
           match_count: 10,
@@ -157,43 +225,112 @@ async function executeTool(
       const { data: kwData } = await supabaseAdmin
         .from('spark_items')
         .select('id, type, title, content, summary, metadata')
-        .eq('spark_id', input.spark_id)
+        .eq('spark_id', sparkId)
         .or(
-          `title.ilike.%${input.query}%,content.ilike.%${input.query}%,summary.ilike.%${input.query}%`
+          `title.ilike.%${query}%,content.ilike.%${query}%,summary.ilike.%${query}%`
         )
         .limit(10);
       return buildToolContent(kwData || [], `Found ${kwData?.length || 0} items (keyword match):`);
     }
 
     case 'keyword_search': {
+      const query = input.query as string;
+      const sparkId = input.spark_id as string;
       const { data } = await supabaseAdmin
         .from('spark_items')
         .select('id, type, title, content, summary, metadata')
-        .eq('spark_id', input.spark_id)
+        .eq('spark_id', sparkId)
         .or(
-          `title.ilike.%${input.query}%,content.ilike.%${input.query}%,summary.ilike.%${input.query}%`
+          `title.ilike.%${query}%,content.ilike.%${query}%,summary.ilike.%${query}%`
         )
         .limit(20);
       return buildToolContent(data || [], `Found ${data?.length || 0} items:`);
     }
 
     case 'list_items': {
+      const sparkId = input.spark_id as string;
       const { data } = await supabaseAdmin
         .from('spark_items')
         .select('id, type, title, content, summary, metadata, created_at')
-        .eq('spark_id', input.spark_id)
+        .eq('spark_id', sparkId)
         .order('created_at', { ascending: false });
       if (!data?.length) return 'No items in this Spark yet.';
       return buildToolContent(data, `Found ${data.length} items:`);
     }
 
     case 'get_spark_details': {
+      const sparkId = input.spark_id as string;
       const { data } = await supabaseAdmin
         .from('sparks')
         .select('*')
-        .eq('id', input.spark_id)
+        .eq('id', sparkId)
         .single();
       return JSON.stringify(data, null, 2);
+    }
+
+    case 'scrape_url': {
+      const url = input.url as string;
+      const result = await scrapePage(url);
+      if (!result) {
+        return JSON.stringify({ error: 'Failed to scrape page', url });
+      }
+      return JSON.stringify({
+        url,
+        title: result.og_title || url,
+        description: result.og_description || null,
+        text: result.text.substring(0, 30_000),
+      });
+    }
+
+    case 'save_web_research': {
+      const title = input.title as string;
+      const query = input.query as string;
+      const content = input.content as string;
+      const summary = input.summary as string;
+      const sources = input.sources as Array<{ url: string; title: string; snippet?: string }>;
+      const sparkId = input.spark_id as string;
+
+      // Insert the research item
+      const { data: researchItem, error: insertError } = await supabaseAdmin
+        .from('web_research_items')
+        .insert({ title, query, content, summary, sources })
+        .select('id')
+        .single();
+
+      if (insertError || !researchItem) {
+        console.error('[save_web_research] Insert failed:', insertError?.message);
+        return JSON.stringify({ error: 'Failed to save research', details: insertError?.message });
+      }
+
+      // Link to Spark via join table
+      const { error: joinError } = await supabaseAdmin
+        .from('spark_web_research')
+        .insert({ spark_id: sparkId, web_research_item_id: researchItem.id });
+
+      if (joinError) {
+        console.error('[save_web_research] Join insert failed:', joinError.message);
+      }
+
+      // Fire-and-forget: generate embedding
+      const embeddingText = `[web_research] ${title}\nQuery: ${query}\n${summary || ''}\n${content}`;
+      generateEmbedding(embeddingText)
+        .then(async (embedding) => {
+          if (embedding) {
+            await supabaseAdmin
+              .from('web_research_items')
+              .update({ embedding: JSON.stringify(embedding) })
+              .eq('id', researchItem.id);
+          }
+        })
+        .catch((err) => {
+          console.error('[save_web_research] Embedding failed:', err);
+        });
+
+      return JSON.stringify({
+        success: true,
+        id: researchItem.id,
+        message: `Research "${title}" saved and linked to Spark. Embedding generation in progress.`,
+      });
     }
 
     default:
@@ -255,8 +392,8 @@ async function retrieveContext(
     };
   }
 
-  // Search both spark_items and chat_sessions in parallel
-  const [itemsResult, sessionsResult] = await Promise.all([
+  // Search spark_items, chat_sessions, and web_research in parallel
+  const [itemsResult, sessionsResult, researchResult] = await Promise.all([
     supabaseAdmin.rpc('match_spark_items', {
       p_spark_id: sparkId,
       query_embedding: JSON.stringify(queryEmbedding),
@@ -269,13 +406,21 @@ async function retrieveContext(
       match_threshold: 0.25,
       match_count: 5,
     }),
+    supabaseAdmin.rpc('match_web_research_items', {
+      p_spark_id: sparkId,
+      query_embedding: JSON.stringify(queryEmbedding),
+      match_threshold: 0.25,
+      match_count: 3,
+    }),
   ]);
 
   const { data, error } = itemsResult;
   const { data: sessionData, error: sessionError } = sessionsResult;
+  const { data: researchData, error: researchError } = researchResult;
 
   console.log('[retrieveContext] match_spark_items result:', { error: error?.message || null, count: data?.length || 0 });
   console.log('[retrieveContext] match_chat_sessions result:', { error: sessionError?.message || null, count: sessionData?.length || 0 });
+  console.log('[retrieveContext] match_web_research_items result:', { error: researchError?.message || null, count: researchData?.length || 0 });
 
   // Build chat session context text
   let sessionContextText = '';
@@ -292,6 +437,32 @@ async function retrieveContext(
     sessionContextText = `\n\n## Relevant Past Conversations\nThe following previous chat sessions in this Spark are relevant:\n\n${sessionTexts}`;
   }
 
+  // Build web research context text
+  let webResearchContextText = '';
+  const webResearchContextItems: VectorContextItem[] = [];
+  if (researchData && researchData.length > 0) {
+    const researchTexts = researchData
+      .map((r: Record<string, unknown>, i: number) => {
+        const similarity = ((r.similarity as number) * 100).toFixed(0);
+        const sources = (r.sources as Array<{ url: string; title: string }>) || [];
+        const topSources = sources.slice(0, 3).map((s) => `  - ${s.title}: ${s.url}`).join('\n');
+        return `${i + 1}. "${r.title}" (${similarity}% match)\n  Query: ${r.query}\n  Summary: ${r.summary || 'N/A'}\n  Sources:\n${topSources}`;
+      })
+      .join('\n\n');
+
+    webResearchContextText = `\n\n## Relevant Past Web Research\nThe following web research saved in this Spark is relevant:\n\n${researchTexts}`;
+
+    for (const r of researchData) {
+      webResearchContextItems.push({
+        id: r.id as string,
+        type: 'web_research',
+        title: r.title as string,
+        similarity: r.similarity as number,
+        summary: (r.summary as string) || null,
+      });
+    }
+  }
+
   if (error || !data || data.length === 0) {
     console.log('[retrieveContext] Vector search failed/empty — falling back to recent items');
     const { data: recent } = await supabaseAdmin
@@ -302,8 +473,8 @@ async function retrieveContext(
       .limit(5);
 
     if (!recent || recent.length === 0) {
-      if (sessionContextText) {
-        return { text: sessionContextText, images: [], items: [] };
+      if (sessionContextText || webResearchContextText) {
+        return { text: sessionContextText + webResearchContextText, images: [], items: webResearchContextItems };
       }
       return { text: '', images: [], items: [] };
     }
@@ -316,9 +487,9 @@ async function retrieveContext(
       .join('\n\n');
 
     return {
-      text: `\n\n## Recent Items in This Spark\n${recentTexts}${sessionContextText}`,
+      text: `\n\n## Recent Items in This Spark\n${recentTexts}${sessionContextText}${webResearchContextText}`,
       images: extractImageUrls(recent as Record<string, unknown>[]),
-      items: [],
+      items: webResearchContextItems,
     };
   }
 
@@ -338,15 +509,23 @@ async function retrieveContext(
     .join('\n\n');
 
   return {
-    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${itemTexts}${sessionContextText}`,
+    text: `\n\n## Retrieved Context (semantically relevant items)\nThe following items from this Spark are most relevant to the user's question:\n\n${itemTexts}${sessionContextText}${webResearchContextText}`,
     images: extractImageUrls(data),
-    items: contextItems,
+    items: [...contextItems, ...webResearchContextItems],
   };
 }
 
 // POST /api/chat - Chat with Claude Opus via RAG pipeline
 export async function POST(request: NextRequest) {
-  const { spark_id, message, session_id: requestSessionId, skip_persist } = await request.json();
+  const {
+    spark_id,
+    message,
+    session_id: requestSessionId,
+    skip_persist,
+    // Optional editor context injected by ChatPanel
+    selected_text,
+    editor_content,
+  } = await request.json();
 
   if (!spark_id || !message) {
     return new Response(
@@ -423,8 +602,29 @@ export async function POST(request: NextRequest) {
 
   // Retrieve relevant context via RAG
   const ragContext = await retrieveContext(spark_id, message);
-  console.log('[chat] RAG context:', { itemCount: ragContext.items.length, hasText: !!ragContext.text, imageCount: ragContext.images.length });
-  const systemPrompt = SYSTEM_PROMPT + ragContext.text;
+  addLogEntry({
+    service: 'supabase',
+    direction: 'event',
+    level: 'info',
+    summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
+  });
+
+  // ── Editor context (injected by ChatPanel when user has the editor open) ──
+  let editorContextSection = '';
+
+  if (editor_content && typeof editor_content === 'string' && editor_content.trim().length > 10) {
+    const truncated = editor_content.slice(0, 8000);
+    editorContextSection += `\n\n---\n## Active Spark Document\nThe user is editing a document in the Spark Editor. The current document content is below. You can reference it, answer questions about it, and suggest edits.\n\n${truncated}`;
+    if (editor_content.length > 8000) {
+      editorContextSection += '\n\n*(Document truncated — showing first 8,000 characters)*';
+    }
+  }
+
+  if (selected_text && typeof selected_text === 'string' && selected_text.trim().length > 0) {
+    editorContextSection += `\n\n## Selected Text\nThe user has highlighted the following text in the document and is asking about it specifically:\n\n> ${selected_text}\n\nWhen you suggest an improvement, rewrite, or replacement for this text, format your replacement inside a fenced code block with the language identifier \`proposal\` — like this:\n\n\`\`\`proposal\nYour replacement text here\n\`\`\`\n\nProvide exactly one \`proposal\` block per response when suggesting edits. Explain your changes in plain text outside the block. Use the RAG pipeline (semantic_search tool) to support your suggestions with context from the Spark's knowledge base where relevant.`;
+  }
+
+  const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection;
 
   const encoder = new TextEncoder();
   const sseStream = new ReadableStream({
@@ -461,49 +661,92 @@ export async function POST(request: NextRequest) {
           keyword_search: 'Searching by keyword...',
           list_items: 'Loading items...',
           get_spark_details: 'Getting Spark details...',
+          scrape_url: 'Reading webpage...',
+          save_web_research: 'Saving research...',
+          web_search: 'Searching the web...',
         };
 
         // Phase 1: Tool-use rounds (non-streaming, text is suppressed anyway)
         for (let turn = 0; turn < 10; turn++) {
+          const anthropicStart = Date.now();
           const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-5-20250929',
+            model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: systemPrompt,
-            tools: TOOLS,
+            tools: ALL_TOOLS,
             messages,
           });
+          addLogEntry({
+            service: 'anthropic',
+            direction: 'response',
+            level: 'info',
+            summary: `messages.create — ${response.stop_reason} (in:${response.usage.input_tokens} out:${response.usage.output_tokens})`,
+            duration: Date.now() - anthropicStart,
+            requestBody: { model: response.model, toolCount: ALL_TOOLS.length, turn },
+            responseBody: { stop_reason: response.stop_reason, input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+          });
 
+          // Detect custom tool_use blocks (our tools)
           const toolUseBlocks = response.content.filter(
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
           );
 
-          // No tool calls — time to stream the final response
-          if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
-            // Extract any text from this non-streamed response and send it
-            for (const block of response.content) {
-              if (block.type === 'text' && block.text) {
-                fullResponse += block.text;
-                send({ type: 'text', content: block.text });
-              }
-            }
-            break;
+          // Detect server_tool_use blocks (Anthropic-hosted like web_search)
+          const serverToolUseBlocks = response.content.filter(
+            (b) => b.type === 'server_tool_use'
+          );
+
+          // Send status events for server tool calls
+          for (const stb of serverToolUseBlocks) {
+            const name = (stb as unknown as { name: string }).name;
+            send({ type: 'status', content: TOOL_LABELS[name] || 'Processing...' });
           }
 
-          // Send status events for tool calls
+          // No custom tool calls — check if this is a final response
+          if (toolUseBlocks.length === 0) {
+            if (response.stop_reason === 'end_turn') {
+              for (const block of response.content) {
+                if (block.type === 'text' && block.text) {
+                  fullResponse += block.text;
+                  send({ type: 'text', content: block.text });
+                }
+              }
+              break;
+            }
+            // Server tools were used — their results are auto-included by Anthropic.
+            // Continue the loop with the full response content so server_tool_result
+            // blocks are passed back correctly.
+            messages = [
+              ...messages,
+              { role: 'assistant', content: response.content },
+            ];
+            continue;
+          }
+
+          // Send status events for custom tool calls
           for (const toolUse of toolUseBlocks) {
             send({ type: 'status', content: TOOL_LABELS[toolUse.name] || 'Processing...' });
           }
 
-          // Execute tools
+          // Execute custom tools
           const toolResults = await Promise.all(
-            toolUseBlocks.map(async (toolUse) => ({
-              type: 'tool_result' as const,
-              tool_use_id: toolUse.id,
-              content: await executeTool(
-                toolUse.name,
-                toolUse.input as Record<string, string>
-              ),
-            }))
+            toolUseBlocks.map(async (toolUse) => {
+              addLogEntry({
+                service: 'internal',
+                direction: 'event',
+                level: 'info',
+                summary: `Tool: ${toolUse.name}`,
+                requestBody: toolUse.input,
+              });
+              return {
+                type: 'tool_result' as const,
+                tool_use_id: toolUse.id,
+                content: await executeTool(
+                  toolUse.name,
+                  toolUse.input as Record<string, unknown>
+                ),
+              };
+            })
           );
 
           messages = [
@@ -515,36 +758,65 @@ export async function POST(request: NextRequest) {
           // Phase 2: After tool execution, stream the response token-by-token
           send({ type: 'status', content: 'Generating response...' });
 
+          const streamStart = Date.now();
+          addLogEntry({
+            service: 'anthropic',
+            direction: 'request',
+            level: 'info',
+            summary: `messages.stream (after ${toolUseBlocks.length} tool${toolUseBlocks.length !== 1 ? 's' : ''})`,
+            requestBody: { model: 'claude-sonnet-4-6', stream: true },
+          });
+
           const stream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-5-20250929',
+            model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: systemPrompt,
-            tools: TOOLS,
+            tools: ALL_TOOLS,
             messages,
           });
 
-          // Buffer text during streaming in case there are more tool calls
-          const textBuffer: string[] = [];
+          // Stream text to client in real-time as tokens arrive
           stream.on('text', (text) => {
-            textBuffer.push(text);
+            fullResponse += text;
+            send({ type: 'text', content: text });
           });
 
           const finalMessage = await stream.finalMessage();
+          addLogEntry({
+            service: 'anthropic',
+            direction: 'response',
+            level: 'info',
+            summary: `messages.stream — ${finalMessage.stop_reason} (in:${finalMessage.usage.input_tokens} out:${finalMessage.usage.output_tokens})`,
+            duration: Date.now() - streamStart,
+            responseBody: { stop_reason: finalMessage.stop_reason, input_tokens: finalMessage.usage.input_tokens, output_tokens: finalMessage.usage.output_tokens },
+          });
 
           const finalToolUses = finalMessage.content.filter(
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
           );
 
-          if (finalMessage.stop_reason === 'end_turn' || finalToolUses.length === 0) {
-            // Final turn — flush buffered text as streamed chunks
-            for (const chunk of textBuffer) {
-              fullResponse += chunk;
-              send({ type: 'text', content: chunk });
-            }
-            break;
+          // Also check for server tool uses in the streamed response
+          const finalServerToolUses = finalMessage.content.filter(
+            (b) => b.type === 'server_tool_use'
+          );
+          for (const stb of finalServerToolUses) {
+            const name = (stb as unknown as { name: string }).name;
+            send({ type: 'status', content: TOOL_LABELS[name] || 'Processing...' });
           }
 
-          // More tool calls — discard text, execute tools, continue loop
+          if (finalToolUses.length === 0) {
+            if (finalMessage.stop_reason === 'end_turn') {
+              break;
+            }
+            // Server tools only — continue loop
+            messages = [
+              ...messages,
+              { role: 'assistant', content: finalMessage.content },
+            ];
+            continue;
+          }
+
+          // More custom tool calls — execute tools, continue loop
           for (const toolUse of finalToolUses) {
             send({ type: 'status', content: TOOL_LABELS[toolUse.name] || 'Processing...' });
           }
@@ -555,14 +827,23 @@ export async function POST(request: NextRequest) {
             {
               role: 'user',
               content: await Promise.all(
-                finalToolUses.map(async (toolUse) => ({
-                  type: 'tool_result' as const,
-                  tool_use_id: toolUse.id,
-                  content: await executeTool(
-                    toolUse.name,
-                    toolUse.input as Record<string, string>
-                  ),
-                }))
+                finalToolUses.map(async (toolUse) => {
+                  addLogEntry({
+                    service: 'internal',
+                    direction: 'event',
+                    level: 'info',
+                    summary: `Tool: ${toolUse.name}`,
+                    requestBody: toolUse.input,
+                  });
+                  return {
+                    type: 'tool_result' as const,
+                    tool_use_id: toolUse.id,
+                    content: await executeTool(
+                      toolUse.name,
+                      toolUse.input as Record<string, unknown>
+                    ),
+                  };
+                })
               ),
             },
           ];

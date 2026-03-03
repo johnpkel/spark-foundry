@@ -2,36 +2,145 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText, StickyNote, File, HardDrive, Box } from 'lucide-react';
+import {
+  ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText,
+  StickyNote, File, HardDrive, Box, Globe, Database, Paperclip, BarChart2,
+  MessageSquare, MessageSquareText, Target,
+} from 'lucide-react';
+import { SlackIcon } from '@/components/SlackIcon';
+import IntegrationsStatus from '@/components/IntegrationsStatus';
 import ItemCard from '@/components/ItemCard';
+import WebResearchCard from '@/components/WebResearchCard';
 import AddItemModal from '@/components/AddItemModal';
 import ChatPanel from '@/components/ChatPanel';
 import ArtifactGenerator from '@/components/ArtifactGenerator';
 import ScorePanel from '@/components/ScorePanel';
+import DiscussionsPanel from '@/components/DiscussionsPanel';
 import ImageLightbox from '@/components/ImageLightbox';
 import ItemsVectorSpace from '@/components/ItemsVectorSpaceDynamic';
-import type { Spark, SparkItem, GeneratedArtifact, ItemType } from '@/lib/types';
+import SparkEditor from '@/components/SparkEditor';
+import type { CommentSubmitData } from '@/components/CommentPopover';
+import { EditorContextProvider, useEditorContext } from '@/lib/editor-context';
+import type { EditorSelection } from '@/lib/editor-context';
+import type { JSONContent } from '@tiptap/react';
+import type { Spark, SparkItem, GeneratedArtifact, ItemType, WebResearchItem, CommentThread } from '@/lib/types';
 
-type LeftTab = 'items' | 'generate';
+type LeftTab = 'items' | 'graph' | 'chat' | 'generate';
+type RightTab = 'discussions' | 'scoring';
 
+/** Thin wrapper — provides the editor context that SparkEditor and ChatPanel share */
 export default function SparkWorkspace() {
+  return (
+    <EditorContextProvider>
+      <SparkWorkspacePage />
+    </EditorContextProvider>
+  );
+}
+
+function SparkWorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const sparkId = params.id as string;
 
   const [spark, setSpark] = useState<Spark | null>(null);
   const [items, setItems] = useState<SparkItem[]>([]);
+  const [researchItems, setResearchItems] = useState<WebResearchItem[]>([]);
   const [artifacts, setArtifacts] = useState<GeneratedArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [leftTab, setLeftTab] = useState<LeftTab>('items');
-  const [itemsView, setItemsView] = useState<'list' | 'space'>('list');
   const [showAddItemModal, setShowAddItemModal] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<ItemType | 'all'>('all');
+  const [typeFilter, setTypeFilter] = useState<ItemType | 'web_research' | 'all'>('all');
   const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
+  const [rightTab, setRightTab] = useState<RightTab>('discussions');
+  const [discussions, setDiscussions] = useState<CommentThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+
+  // ── Debounced editor auto-save ─────────────────────
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const abortRef = useRef<AbortController>(null);
+  const sparkRef = useRef(spark);
+  sparkRef.current = spark;
+
+  const handleEditorChange = useCallback((content: JSONContent) => {
+    // Clear any pending save
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+    saveTimerRef.current = setTimeout(async () => {
+      // Abort any in-flight save
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setSaveStatus('saving');
+      try {
+        const currentSpark = sparkRef.current;
+        const merged = { ...(currentSpark?.metadata ?? {}), editor_content: content };
+        const res = await fetch(`/api/sparks/${sparkId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata: merged }),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('save failed');
+        setSaveStatus('idle');
+        // Keep local spark metadata in sync so next merge is correct
+        if (currentSpark) {
+          setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setSaveStatus('error');
+      }
+    }, 1500);
+  }, [sparkId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      abortRef.current?.abort();
+      if (discSaveTimerRef.current) clearTimeout(discSaveTimerRef.current);
+      discAbortRef.current?.abort();
+    };
+  }, []);
+
+  // ── Debounced discussion auto-save ──────────────────
+  const discSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const discAbortRef = useRef<AbortController>(null);
+  const discussionsRef = useRef(discussions);
+  discussionsRef.current = discussions;
+
+  const saveDiscussions = useCallback((updated: CommentThread[]) => {
+    setDiscussions(updated);
+    if (discSaveTimerRef.current) clearTimeout(discSaveTimerRef.current);
+    discSaveTimerRef.current = setTimeout(async () => {
+      discAbortRef.current?.abort();
+      const controller = new AbortController();
+      discAbortRef.current = controller;
+      try {
+        const currentSpark = sparkRef.current;
+        const merged = { ...(currentSpark?.metadata ?? {}), discussions: updated };
+        const res = await fetch(`/api/sparks/${sparkId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metadata: merged }),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('save failed');
+        if (currentSpark) {
+          setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // silently fail for discussion save
+      }
+    }, 500);
+  }, [sparkId]);
 
   // Resizable three-column layout
-  const [leftWidth, setLeftWidth] = useState(320);
-  const [rightWidth, setRightWidth] = useState(300);
+  const [leftWidth, setLeftWidth] = useState(420);
+  const [rightWidth, setRightWidth] = useState(280);
   const draggingHandle = useRef<'left' | 'right' | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -48,7 +157,7 @@ export default function SparkWorkspace() {
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!draggingHandle.current || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const minMiddle = 300;
+    const minMiddle = 320;
 
     if (draggingHandle.current === 'left') {
       const raw = e.clientX - rect.left;
@@ -57,7 +166,7 @@ export default function SparkWorkspace() {
     } else {
       const raw = rect.right - e.clientX;
       const max = Math.min(rect.width * 0.35, rect.width - leftWidth - minMiddle);
-      setRightWidth(Math.min(Math.max(raw, 240), max));
+      setRightWidth(Math.min(Math.max(raw, 200), max));
     }
   }, [leftWidth, rightWidth]);
 
@@ -69,14 +178,24 @@ export default function SparkWorkspace() {
 
   const loadSparkData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/sparks/${sparkId}`);
-      if (res.ok) {
-        const data = await res.json();
+      const [sparkRes, researchRes] = await Promise.all([
+        fetch(`/api/sparks/${sparkId}`),
+        fetch(`/api/research?spark_id=${sparkId}`),
+      ]);
+      if (sparkRes.ok) {
+        const data = await sparkRes.json();
         setSpark(data.spark);
         setItems(data.items);
         setArtifacts(data.artifacts);
+        // Load persisted discussions from metadata
+        const savedDiscussions = (data.spark.metadata?.discussions ?? []) as CommentThread[];
+        setDiscussions(savedDiscussions);
       } else {
         router.push('/');
+      }
+      if (researchRes.ok) {
+        const researchData = await researchRes.json();
+        setResearchItems(researchData);
       }
     } finally {
       setLoading(false);
@@ -98,6 +217,13 @@ export default function SparkWorkspace() {
     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
   }, []);
 
+  const handleDeleteResearch = async (researchId: string) => {
+    const res = await fetch(`/api/research/${researchId}`, { method: 'DELETE' });
+    if (res.ok) {
+      setResearchItems(prev => prev.filter(r => r.id !== researchId));
+    }
+  };
+
   const typeFilterConfig: Record<string, { icon: typeof Link2; label: string }> = {
     link: { icon: Link2, label: 'Links' },
     image: { icon: Image, label: 'Images' },
@@ -105,15 +231,88 @@ export default function SparkWorkspace() {
     file: { icon: File, label: 'Files' },
     note: { icon: StickyNote, label: 'Notes' },
     google_drive: { icon: HardDrive, label: 'Drive' },
+    web_research: { icon: Globe, label: 'Research' },
+    slack_message: { icon: SlackIcon as unknown as typeof Link2, label: 'Slack' },
+    contentstack_entry: { icon: Database, label: 'Entries' },
+    contentstack_asset: { icon: Paperclip, label: 'Assets' },
+    clarity_insight: { icon: BarChart2, label: 'Clarity' },
   };
 
-  // Only show filter chips for types that exist in items
-  const availableTypes = [...new Set(items.map((i) => i.type))];
-  const filteredItems = typeFilter === 'all' ? items : items.filter((i) => i.type === typeFilter);
+  const availableTypes: string[] = [
+    ...new Set(items.map((i) => i.type)),
+    ...(researchItems.length > 0 ? ['web_research'] : []),
+  ];
+  const filteredItems = typeFilter === 'all' || typeFilter === 'web_research'
+    ? items
+    : items.filter((i) => i.type === typeFilter);
 
   const handleImageClick = useCallback((src: string, alt?: string) => {
     setLightbox({ src, alt });
   }, []);
+
+  // ── Editor "Ask AI" handler ─────────────────────────
+  const editorCtx = useEditorContext();
+  const handleAskAI = useCallback((sel: EditorSelection) => {
+    editorCtx?.setSelectedText(sel);
+    setLeftTab('chat');
+  }, [editorCtx]);
+
+  // ── Discussion handlers ────────────────────────────
+  const handleCommentCreate = useCallback((data: CommentSubmitData) => {
+    const thread: CommentThread = {
+      id: data.threadId,
+      selectedText: data.selectedText,
+      resolved: false,
+      createdAt: new Date().toISOString(),
+      comments: [{
+        id: crypto.randomUUID(),
+        authorId: data.authorId,
+        authorName: data.authorName,
+        content: data.commentText,
+        createdAt: new Date().toISOString(),
+      }],
+    };
+    const updated = [...discussionsRef.current, thread];
+    saveDiscussions(updated);
+    setActiveThreadId(thread.id);
+    setRightTab('discussions');
+  }, [saveDiscussions]);
+
+  const handleResolveThread = useCallback((threadId: string) => {
+    const updated = discussionsRef.current.map(t =>
+      t.id === threadId ? { ...t, resolved: true } : t,
+    );
+    saveDiscussions(updated);
+    // Also update the editor mark to reflect resolved state
+    editorCtx?.getEditor()?.commands.resolveComment(threadId);
+    setActiveThreadId(null);
+  }, [saveDiscussions, editorCtx]);
+
+  const handleAddReply = useCallback((threadId: string, text: string) => {
+    const reply = {
+      id: crypto.randomUUID(),
+      authorId: 'current-user',
+      authorName: 'You',
+      content: text,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = discussionsRef.current.map(t =>
+      t.id === threadId ? { ...t, comments: [...t.comments, reply] } : t,
+    );
+    saveDiscussions(updated);
+  }, [saveDiscussions]);
+
+  const handleCommentMarkClick = useCallback((threadId: string) => {
+    setActiveThreadId(threadId);
+    setRightTab('discussions');
+  }, []);
+
+  // ── Tab config ──────────────────────────────────────
+  const tabConfig: { id: LeftTab; icon: typeof LayoutGrid; label: string; count?: number }[] = [
+    { id: 'items', icon: LayoutGrid, label: 'Items', count: items.length + researchItems.length || undefined },
+    { id: 'graph', icon: Box, label: 'Knowledge Graph' },
+    { id: 'chat', icon: MessageSquare, label: 'Chat' },
+  ];
 
   if (loading) {
     return (
@@ -127,7 +326,8 @@ export default function SparkWorkspace() {
 
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
-      {/* Spark Header */}
+
+      {/* ── Spark Header ── */}
       <div className="bg-surface border-b border-venus-gray-200 px-6 py-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
@@ -147,6 +347,7 @@ export default function SparkWorkspace() {
               <p className="text-sm text-venus-gray-500 truncate">{spark.description}</p>
             )}
           </div>
+          <IntegrationsStatus />
           <button
             onClick={() => setLeftTab('generate')}
             className="flex items-center gap-2 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-semibold rounded-lg transition-colors shrink-0"
@@ -157,148 +358,173 @@ export default function SparkWorkspace() {
         </div>
       </div>
 
-      {/* Three-column layout: Items/Generate | Chat | Scoring */}
+      {/* ── Three-column layout ── */}
       <div ref={containerRef} className="flex-1 flex overflow-hidden">
-        {/* Left column: Items + Generate */}
-        <div className="shrink-0 flex flex-col" style={{ width: leftWidth }}>
-          {/* Left tab bar */}
-          <div className="flex items-center gap-1 px-6 pt-4 pb-2 shrink-0">
-            <button
-              onClick={() => { setLeftTab('items'); setItemsView('list'); }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                leftTab === 'items' && itemsView === 'list'
-                  ? 'bg-venus-purple-light text-venus-purple'
-                  : 'text-venus-gray-500 hover:bg-venus-gray-100 hover:text-venus-gray-700'
-              }`}
-            >
-              <LayoutGrid size={15} />
-              Items
-              {items.length > 0 && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                  leftTab === 'items' && itemsView === 'list'
-                    ? 'bg-venus-purple/10 text-venus-purple'
-                    : 'bg-venus-gray-200 text-venus-gray-500'
-                }`}>
-                  {items.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => { setLeftTab('items'); setItemsView('space'); }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                leftTab === 'items' && itemsView === 'space'
-                  ? 'bg-venus-purple-light text-venus-purple'
-                  : 'text-venus-gray-500 hover:bg-venus-gray-100 hover:text-venus-gray-700'
-              }`}
-            >
-              <Box size={15} />
-              Vectors
-            </button>
-            <button
-              onClick={() => setShowAddItemModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 ml-auto bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              <Plus size={14} />
-              Add Item
-            </button>
+
+        {/* Left column: Items / Graph / Chat / Generate */}
+        <div className="shrink-0 flex flex-col border-r border-venus-gray-200" style={{ width: leftWidth }}>
+
+          {/* Tab bar */}
+          <div className="flex items-center gap-0.5 px-3 pt-3 pb-0 shrink-0 border-b border-venus-gray-200 bg-surface">
+            {tabConfig.map(({ id, icon: Icon, label, count }) => (
+              <button
+                key={id}
+                onClick={() => setLeftTab(id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 -mb-px ${
+                  leftTab === id
+                    ? 'border-venus-purple text-venus-purple bg-venus-purple-light/50'
+                    : 'border-transparent text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100'
+                }`}
+              >
+                <Icon size={13} />
+                {label}
+                {count != null && (
+                  <span className={`text-[10px] px-1 py-0.5 rounded-full ${
+                    leftTab === id
+                      ? 'bg-venus-purple/10 text-venus-purple'
+                      : 'bg-venus-gray-200 text-venus-gray-500'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            ))}
+
+            {/* Add Item — only on items/graph tabs */}
+            {(leftTab === 'items' || leftTab === 'graph') && (
+              <button
+                onClick={() => setShowAddItemModal(true)}
+                className="flex items-center gap-1 px-2.5 py-1.5 ml-auto mb-1 bg-venus-purple hover:bg-venus-purple-deep text-white text-xs font-medium rounded-md transition-colors shrink-0"
+              >
+                <Plus size={13} />
+                Add
+              </button>
+            )}
           </div>
 
-          {/* Left tab content */}
-          <div className="flex-1 overflow-y-auto">
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+
+            {/* Items list */}
             {leftTab === 'items' && (
-              <div className={`${itemsView === 'space' ? 'flex flex-col h-full' : ''} px-6 py-4`}>
-                {itemsView === 'space' ? (
-                  /* 3D Vector Space View */
-                  <div className="flex-1 min-h-0 rounded-lg border border-venus-gray-200 bg-venus-gray-50 overflow-hidden">
-                    <ItemsVectorSpace sparkId={sparkId} />
-                  </div>
-                ) : (
-                  <>
-                    {/* Type filter chips */}
-                    {availableTypes.length > 1 && (
-                      <div className="flex flex-wrap gap-1.5 mb-4">
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                {/* Type filter chips */}
+                {availableTypes.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    <button
+                      onClick={() => setTypeFilter('all')}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        typeFilter === 'all'
+                          ? 'bg-venus-purple text-white'
+                          : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
+                      }`}
+                    >
+                      All
+                    </button>
+                    {availableTypes.map((type) => {
+                      const cfg = typeFilterConfig[type];
+                      if (!cfg) return null;
+                      const FilterIcon = cfg.icon;
+                      const count = type === 'web_research'
+                        ? researchItems.length
+                        : items.filter((i) => i.type === type).length;
+                      return (
                         <button
-                          onClick={() => setTypeFilter('all')}
-                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                            typeFilter === 'all'
+                          key={type}
+                          onClick={() => setTypeFilter(typeFilter === type ? 'all' : type as ItemType | 'web_research')}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                            typeFilter === type
                               ? 'bg-venus-purple text-white'
                               : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
                           }`}
                         >
-                          All
+                          <FilterIcon size={11} />
+                          {cfg.label}
+                          <span className={`${typeFilter === type ? 'text-white/70' : 'text-venus-gray-400'}`}>
+                            {count}
+                          </span>
                         </button>
-                        {availableTypes.map((type) => {
-                          const cfg = typeFilterConfig[type];
-                          const FilterIcon = cfg.icon;
-                          const count = items.filter((i) => i.type === type).length;
-                          return (
-                            <button
-                              key={type}
-                              onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
-                              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                                typeFilter === type
-                                  ? 'bg-venus-purple text-white'
-                                  : 'bg-venus-gray-100 text-venus-gray-500 hover:bg-venus-gray-200'
-                              }`}
-                            >
-                              <FilterIcon size={11} />
-                              {cfg.label}
-                              <span className={`${typeFilter === type ? 'text-white/70' : 'text-venus-gray-400'}`}>
-                                {count}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                      );
+                    })}
+                  </div>
+                )}
 
-                    {filteredItems.length > 0 ? (
-                      <div className="space-y-3">
-                        {filteredItems.map((item) => (
-                          <ItemCard
-                            key={item.id}
-                            item={item}
-                            onDelete={handleDeleteItem}
-                            onItemUpdated={handleItemUpdated}
-                            onImageClick={handleImageClick}
-                          />
-                        ))}
-                      </div>
-                    ) : items.length > 0 ? (
-                      <div className="text-center py-12">
-                        <p className="text-sm text-venus-gray-500">No items match this filter.</p>
-                        <button
-                          onClick={() => setTypeFilter('all')}
-                          className="text-sm text-venus-purple hover:text-venus-purple-deep mt-2 transition-colors"
-                        >
-                          Clear filter
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="text-center py-16">
-                        <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
-                          <Plus size={20} className="text-venus-gray-400" />
-                        </div>
-                        <h3 className="text-sm font-semibold text-venus-gray-700 mb-1">No items yet</h3>
-                        <p className="text-sm text-venus-gray-500 mb-4">
-                          Add links, text, images, and notes to build your Spark.
-                        </p>
-                        <button
-                          onClick={() => setShowAddItemModal(true)}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
-                        >
-                          <Plus size={14} />
-                          Add First Item
-                        </button>
-                      </div>
-                    )}
-                  </>
+                {typeFilter === 'web_research' ? (
+                  researchItems.length > 0 ? (
+                    <div className="space-y-3">
+                      {researchItems.map((ri) => (
+                        <WebResearchCard key={ri.id} item={ri} onDelete={handleDeleteResearch} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-sm text-venus-gray-500">No research items yet.</p>
+                      <p className="text-xs text-venus-gray-400 mt-1">Ask the assistant to research a topic to get started.</p>
+                    </div>
+                  )
+                ) : (filteredItems.length > 0 || (typeFilter === 'all' && researchItems.length > 0)) ? (
+                  <div className="space-y-3">
+                    {filteredItems.map((item) => (
+                      <ItemCard
+                        key={item.id}
+                        item={item}
+                        onDelete={handleDeleteItem}
+                        onItemUpdated={handleItemUpdated}
+                        onImageClick={handleImageClick}
+                      />
+                    ))}
+                    {typeFilter === 'all' && researchItems.map((ri) => (
+                      <WebResearchCard key={ri.id} item={ri} onDelete={handleDeleteResearch} />
+                    ))}
+                  </div>
+                ) : items.length > 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-sm text-venus-gray-500">No items match this filter.</p>
+                    <button
+                      onClick={() => setTypeFilter('all')}
+                      className="text-sm text-venus-purple hover:text-venus-purple-deep mt-2 transition-colors"
+                    >
+                      Clear filter
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center py-16">
+                    <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
+                      <Plus size={20} className="text-venus-gray-400" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-venus-gray-700 mb-1">No items yet</h3>
+                    <p className="text-sm text-venus-gray-500 mb-4">
+                      Add links, text, images, and notes to build your Spark.
+                    </p>
+                    <button
+                      onClick={() => setShowAddItemModal(true)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      <Plus size={14} />
+                      Add First Item
+                    </button>
+                  </div>
                 )}
               </div>
             )}
 
+            {/* Knowledge Graph */}
+            {leftTab === 'graph' && (
+              <div className="flex-1 min-h-0 p-4 flex flex-col">
+                <div className="flex-1 min-h-0 rounded-lg border border-venus-gray-200 bg-venus-gray-50 overflow-hidden">
+                  <ItemsVectorSpace sparkId={sparkId} />
+                </div>
+              </div>
+            )}
+
+            {/* Chat */}
+            {leftTab === 'chat' && (
+              <ChatPanel sparkId={sparkId} itemCount={items.length} />
+            )}
+
+            {/* Generate */}
             {leftTab === 'generate' && (
-              <div className="px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-4 py-4">
                 <ArtifactGenerator
                   sparkId={sparkId}
                   artifacts={artifacts}
@@ -306,6 +532,7 @@ export default function SparkWorkspace() {
                 />
               </div>
             )}
+
           </div>
         </div>
 
@@ -317,9 +544,26 @@ export default function SparkWorkspace() {
           className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
         />
 
-        {/* Middle column: Chat */}
-        <div className="flex-1 flex flex-col min-w-0 bg-surface">
-          <ChatPanel sparkId={sparkId} itemCount={items.length} />
+        {/* Middle column: Tiptap editor */}
+        <div className="relative flex-1 flex flex-col min-w-0 bg-surface">
+          <SparkEditor
+            onAskAI={handleAskAI}
+            initialContent={spark.metadata?.editor_content as JSONContent | undefined}
+            onContentChange={handleEditorChange}
+            onCommentCreate={handleCommentCreate}
+            onCommentMarkClick={handleCommentMarkClick}
+            activeThreadId={activeThreadId}
+          />
+          {/* Save status indicator */}
+          {saveStatus !== 'idle' && (
+            <div className={`absolute bottom-3 right-3 text-xs px-2.5 py-1 rounded-full pointer-events-none ${
+              saveStatus === 'saving'
+                ? 'bg-venus-gray-100 text-venus-gray-500'
+                : 'bg-red-50 text-red-500'
+            }`}>
+              {saveStatus === 'saving' ? 'Saving…' : 'Save failed'}
+            </div>
+          )}
         </div>
 
         {/* Right resize handle */}
@@ -330,12 +574,52 @@ export default function SparkWorkspace() {
           className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
         />
 
-        {/* Right column: Content Scoring */}
+        {/* Right column: Discussions / Scoring */}
         <div className="shrink-0 flex flex-col bg-surface border-l border-venus-gray-200" style={{ width: rightWidth }}>
+          {/* Right tab bar */}
+          <div className="flex items-center gap-0.5 px-3 pt-3 pb-0 shrink-0 border-b border-venus-gray-200 bg-surface">
+            {([
+              { id: 'discussions' as RightTab, icon: MessageSquareText, label: 'Discussions', count: discussions.filter(t => !t.resolved).length || undefined },
+              { id: 'scoring' as RightTab, icon: Target, label: 'Scoring', count: undefined as number | undefined },
+            ]).map(({ id, icon: Icon, label, count }) => (
+              <button
+                key={id}
+                onClick={() => setRightTab(id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 -mb-px ${
+                  rightTab === id
+                    ? 'border-venus-purple text-venus-purple bg-venus-purple-light/50'
+                    : 'border-transparent text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100'
+                }`}
+              >
+                <Icon size={13} />
+                {label}
+                {count != null && (
+                  <span className={`text-[10px] px-1 py-0.5 rounded-full ${
+                    rightTab === id
+                      ? 'bg-venus-purple/10 text-venus-purple'
+                      : 'bg-venus-gray-200 text-venus-gray-500'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
           <div className="flex-1 overflow-y-auto">
-            <ScorePanel />
+            {rightTab === 'discussions' ? (
+              <DiscussionsPanel
+                discussions={discussions}
+                activeThreadId={activeThreadId}
+                onActivateThread={setActiveThreadId}
+                onResolveThread={handleResolveThread}
+                onAddReply={handleAddReply}
+              />
+            ) : (
+              <ScorePanel />
+            )}
           </div>
         </div>
+
       </div>
 
       <AddItemModal
@@ -352,6 +636,7 @@ export default function SparkWorkspace() {
           onClose={() => setLightbox(null)}
         />
       )}
+
     </div>
   );
 }

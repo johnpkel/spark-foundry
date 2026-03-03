@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Link2, Image, FileText, StickyNote, File, ExternalLink, X, Loader2, Globe, HardDrive, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
+import { Link2, Image, FileText, StickyNote, File, ExternalLink, X, Loader2, HardDrive, ChevronDown, ChevronUp, Database, Paperclip, BarChart2 } from 'lucide-react';
+import { SlackIcon } from '@/components/SlackIcon';
 import type { SparkItem } from '@/lib/types';
 
 interface ItemCardProps {
@@ -19,7 +20,10 @@ const typeConfig = {
   file: { icon: File, color: 'bg-venus-yellow-light text-venus-yellow', label: 'File' },
   note: { icon: StickyNote, color: 'bg-venus-yellow-light text-venus-yellow', label: 'Note' },
   google_drive: { icon: HardDrive, color: 'bg-venus-green-light text-venus-green', label: 'Drive' },
-  slack_message: { icon: MessageSquare, color: 'bg-venus-blue-light text-venus-blue', label: 'Slack' },
+  slack_message: { icon: SlackIcon, color: 'bg-venus-blue-light text-venus-blue', label: 'Slack' },
+  contentstack_entry: { icon: Database, color: 'bg-venus-purple-light text-venus-purple', label: 'CS Entry' },
+  contentstack_asset: { icon: Paperclip, color: 'bg-venus-green-light text-venus-green', label: 'CS Asset' },
+  clarity_insight: { icon: BarChart2, color: 'bg-venus-blue-light text-venus-blue', label: 'Clarity' },
 };
 
 function getDriveLabel(mimeType: string): string {

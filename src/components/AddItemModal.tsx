@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Link2, Image, FileText, StickyNote, File, HardDrive, Search, Check, Loader2, Unplug } from 'lucide-react';
+import { X, Link2, Image, FileText, StickyNote, File, HardDrive, Search, Check, Loader2, Unplug, Database, Paperclip, BarChart2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { ItemType } from '@/lib/types';
+import ContentstackEntriesPanel from './ContentstackEntriesPanel';
+import ContentstackAssetsPanel from './ContentstackAssetsPanel';
+import ClarityPanel from './ClarityPanel';
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -30,6 +33,9 @@ const itemTypes: { type: ItemType; label: string; icon: typeof Link2; descriptio
   { type: 'image', label: 'Image', icon: Image, description: 'Add an image URL' },
   { type: 'file', label: 'File', icon: File, description: 'Reference an external file' },
   { type: 'google_drive', label: 'Drive', icon: HardDrive, description: 'Add a file from Google Drive' },
+  { type: 'contentstack_entry', label: 'CS Entries', icon: Database, description: 'Import entries from Contentstack' },
+  { type: 'contentstack_asset', label: 'CS Assets', icon: Paperclip, description: 'Import assets from Contentstack' },
+  { type: 'clarity_insight', label: 'Clarity', icon: BarChart2, description: 'Import analytics from Microsoft Clarity' },
 ];
 
 const contentLabel: Record<string, string> = {
@@ -223,6 +229,7 @@ export default function AddItemModal({ isOpen, sparkId, onClose, onAdded }: AddI
 
   const isTextArea = selectedType === 'text' || selectedType === 'note';
   const isDrive = selectedType === 'google_drive';
+  const isExternalPanel = selectedType === 'contentstack_entry' || selectedType === 'contentstack_asset' || selectedType === 'clarity_insight';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -253,6 +260,27 @@ export default function AddItemModal({ isOpen, sparkId, onClose, onAdded }: AddI
           ))}
         </div>
 
+        {/* Contentstack panels — self-contained, replace the standard form */}
+        {selectedType === 'contentstack_entry' && (
+          <ContentstackEntriesPanel
+            sparkId={sparkId}
+            onImported={() => { onAdded(); onClose(); }}
+          />
+        )}
+        {selectedType === 'contentstack_asset' && (
+          <ContentstackAssetsPanel
+            sparkId={sparkId}
+            onImported={() => { onAdded(); onClose(); }}
+          />
+        )}
+        {selectedType === 'clarity_insight' && (
+          <ClarityPanel
+            sparkId={sparkId}
+            onImported={() => { onAdded(); onClose(); }}
+          />
+        )}
+
+        {!isExternalPanel && (
         <form onSubmit={handleSubmit}>
           {/* Google Drive panel */}
           {isDrive && (
@@ -437,6 +465,7 @@ export default function AddItemModal({ isOpen, sparkId, onClose, onAdded }: AddI
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

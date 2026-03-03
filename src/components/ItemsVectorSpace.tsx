@@ -16,6 +16,7 @@ const TYPE_COLORS: Record<string, string> = {
   file: '#007a52',
   note: '#ffae0a',
   google_drive: '#4285f4',
+  web_research: '#27ae60',
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -25,6 +26,7 @@ const TYPE_LABELS: Record<string, string> = {
   file: 'File',
   note: 'Note',
   google_drive: 'Drive',
+  web_research: 'Research',
 };
 
 // ─── Types from the API ───────────────────────────────
@@ -332,7 +334,7 @@ export default function ItemsVectorSpace({ sparkId }: ItemsVectorSpaceProps) {
       {/* Header */}
       <div className="absolute top-2 left-3 z-10 flex items-center gap-2">
         <span className="text-[10px] font-semibold text-venus-purple/70 uppercase tracking-wider">
-          Vector Space
+          Semantic Retrieval
         </span>
         <span className="text-[10px] text-venus-gray-400">
           {items.length} item{items.length !== 1 ? 's' : ''}

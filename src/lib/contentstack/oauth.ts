@@ -7,7 +7,7 @@ import { cookies } from 'next/headers';
 const CS_AUTH_BASE = 'https://app.contentstack.com';
 const CS_API_BASE = 'https://api.contentstack.io';
 
-const SCOPES = 'user:read cm.stacks.management:read cm.content-types.management:read';
+const SCOPES = 'user:read organization:read cm.stacks.management:read cm.content-types.management:read cm.entries.management:read cm.assets.management:read';
 
 const COOKIE_NAME = 'spark_cs_session';
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
@@ -106,7 +106,7 @@ export function buildCSAuthUrl(state: string): string {
 export async function exchangeCodeForTokens(
   code: string
 ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
-  const res = await fetch(`${CS_API_BASE}/apps-api/token`, {
+  const res = await fetch(`${CS_AUTH_BASE}/apps-api/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -130,7 +130,7 @@ export async function exchangeCodeForTokens(
 export async function refreshAccessToken(
   refreshToken: string
 ): Promise<{ access_token: string; expires_in: number }> {
-  const res = await fetch(`${CS_API_BASE}/apps-api/token`, {
+  const res = await fetch(`${CS_AUTH_BASE}/apps-api/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

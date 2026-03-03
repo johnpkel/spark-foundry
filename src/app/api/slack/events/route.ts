@@ -1,17 +1,9 @@
 import { NextResponse } from 'next/server';
-import { verifySlackSignature, sendEphemeralMessage } from '@/lib/slack';
+import { verifySlackSignature, sendEphemeralMessage, joinChannel } from '@/lib/slack';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export async function POST(request: Request) {
-  // Check bot token is configured
-  if (!process.env.SLACK_BOT_TOKEN) {
-    return NextResponse.json(
-      { error: 'Slack integration not configured — SLACK_BOT_TOKEN missing' },
-      { status: 503 }
-    );
-  }
-
-  // Verify request signature
+  // Verify request signature (uses SLACK_SIGNING_SECRET, not bot token)
   const { valid, body } = await verifySlackSignature(request);
   if (!valid) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
@@ -19,9 +11,18 @@ export async function POST(request: Request) {
 
   const payload = JSON.parse(body);
 
-  // Slack URL verification handshake
+  // Slack URL verification handshake — must respond before bot token check
+  // so the Events URL can be saved even before the bot token is configured.
   if (payload.type === 'url_verification') {
     return NextResponse.json({ challenge: payload.challenge });
+  }
+
+  // All other events require the bot token to respond
+  if (!process.env.SLACK_BOT_TOKEN) {
+    return NextResponse.json(
+      { error: 'Slack integration not configured — SLACK_BOT_TOKEN missing' },
+      { status: 503 }
+    );
   }
 
   // Handle event callbacks
@@ -37,14 +38,17 @@ export async function POST(request: Request) {
       const threadTs: string | undefined = event.thread_ts;
       const messageTs: string = event.ts;
 
-      // Must be inside a thread
+      // Auto-join the channel so the bot can reply (fire-and-forget)
+      joinChannel(channel).catch(() => {});
+
+      // Must be inside a thread to save content
       if (!threadTs) {
         sendEphemeralMessage(channel, user, [
           {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: ':thread: Please @mention me *inside a thread* to send it to a Spark.',
+              text: `:wave: Hi! I\'m *Spark Test*.\n\nTo save a thread to a Spark, @mention me *inside a thread reply*.\n\nYou can also right-click any message → *More message shortcuts* → *Save to Spark*.`,
             },
           },
         ]).catch((err) => console.error('[slack/events] ephemeral error:', err));
@@ -52,7 +56,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      // Fetch active Sparks
       handleAppMention(channel, user, threadTs, messageTs).catch((err) =>
         console.error('[slack/events] handleAppMention error:', err)
       );

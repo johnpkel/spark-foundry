@@ -6,6 +6,7 @@
  */
 
 import crypto from 'crypto';
+import { addLogEntry } from './activity-logger';
 
 const SLACK_API = 'https://slack.com/api';
 
@@ -100,14 +101,53 @@ export async function fetchThreadMessages(
     limit: '100',
   });
 
-  const res = await fetch(`${SLACK_API}/conversations.replies?${params}`, {
+  const url = `${SLACK_API}/conversations.replies?${params}`;
+  const start = Date.now();
+  const correlationId = `slack_${Date.now()}`;
+
+  addLogEntry({
+    service: 'slack',
+    direction: 'request',
+    level: 'info',
+    method: 'GET',
+    url,
+    summary: `conversations.replies channel:${channelId}`,
+    correlationId,
+  });
+
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json();
+  const duration = Date.now() - start;
 
   if (!data.ok) {
+    addLogEntry({
+      service: 'slack',
+      direction: 'response',
+      level: 'error',
+      method: 'GET',
+      url,
+      summary: `conversations.replies — error: ${data.error}`,
+      statusCode: res.status,
+      duration,
+      error: data.error,
+      correlationId,
+    });
     throw new Error(`conversations.replies failed: ${data.error}`);
   }
+
+  addLogEntry({
+    service: 'slack',
+    direction: 'response',
+    level: 'info',
+    method: 'GET',
+    url,
+    summary: `conversations.replies — ${data.messages?.length ?? 0} message${(data.messages?.length ?? 0) !== 1 ? 's' : ''}`,
+    statusCode: 200,
+    duration,
+    correlationId,
+  });
 
   // Filter relevant messages
   const rawMessages = (data.messages || []).filter(
@@ -221,4 +261,55 @@ export async function postMessage(
       text,
     }),
   });
+}
+
+// ─── Join channel ──────────────────────────────────────
+/**
+ * Have the bot join a public channel. Required so the bot can reply
+ * after being @mentioned in a channel it hasn't been added to yet.
+ * Requires channels:join scope.
+ */
+export async function joinChannel(channelId: string): Promise<void> {
+  const token = getBotToken();
+  if (!token) return;
+
+  try {
+    await fetch(`${SLACK_API}/conversations.join`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ channel: channelId }),
+    });
+  } catch {
+    // Non-fatal — bot may already be in channel or it's private
+  }
+}
+
+// ─── Modal ─────────────────────────────────────────────
+/**
+ * Open a Slack modal using views.open.
+ * triggerId must be used within 3 seconds of the interactive payload.
+ */
+export async function openModal(
+  triggerId: string,
+  view: Record<string, unknown>
+): Promise<void> {
+  const token = getBotToken();
+  if (!token) throw new Error('SLACK_BOT_TOKEN not configured');
+
+  const res = await fetch(`${SLACK_API}/views.open`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ trigger_id: triggerId, view }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(`views.open failed: ${data.error || res.status}`);
+  }
 }

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import type { VectorContextItem, ItemType } from '@/lib/types';
 
 // ─── Color map by item type ───────────────────────────
-const TYPE_COLORS: Record<ItemType, string> = {
+const TYPE_COLORS: Record<string, string> = {
   link: '#6c5ce7',
   image: '#00b9e0',
   text: '#9387ed',
@@ -15,9 +15,10 @@ const TYPE_COLORS: Record<ItemType, string> = {
   note: '#ffae0a',
   google_drive: '#4285f4',
   slack_message: '#36C5F0',
+  web_research: '#27ae60',
 };
 
-const TYPE_LABELS: Record<ItemType, string> = {
+const TYPE_LABELS: Record<string, string> = {
   link: 'Link',
   image: 'Image',
   text: 'Text',
@@ -25,6 +26,7 @@ const TYPE_LABELS: Record<ItemType, string> = {
   note: 'Note',
   google_drive: 'Drive',
   slack_message: 'Slack',
+  web_research: 'Research',
 };
 
 // ─── Position items using golden-angle spiral ─────────
@@ -261,7 +263,7 @@ export default function VectorVisualization({ items, query, isProcessing }: Vect
       {/* Label */}
       <div className="absolute top-2 left-3 z-10 flex items-center gap-2">
         <span className="text-[10px] font-semibold text-venus-purple/70 uppercase tracking-wider">
-          Vector Space
+          Semantic Retrieval
         </span>
         <span className="text-[10px] text-venus-gray-400">
           {items.length} item{items.length !== 1 ? 's' : ''} found
