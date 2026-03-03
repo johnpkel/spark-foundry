@@ -654,6 +654,7 @@ function SparkWorkspacePage() {
                 items={items}
                 canvasState={canvasState}
                 onCanvasStateChange={handleCanvasStateChange}
+                onItemAdded={loadSparkData}
               />
             </div>
           )}

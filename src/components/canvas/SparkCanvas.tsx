@@ -9,6 +9,7 @@ import {
   Controls,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   SelectionMode,
   type Node,
   type OnSelectionChangeFunc,
@@ -28,6 +29,8 @@ import {
   LAYOUT,
 } from '@/lib/canvas-layout';
 import type { SparkItem, CanvasState, CanvasGroup } from '@/lib/types';
+
+const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'application/pdf'];
 
 // ── Node types (stable reference — must be outside component) ──
 const NODE_TYPES = {
@@ -55,18 +58,83 @@ interface SparkCanvasProps {
   items: SparkItem[];
   canvasState: CanvasState;
   onCanvasStateChange: (state: CanvasState) => void;
+  onItemAdded?: () => void;
 }
 
-export default function SparkCanvas({
+export default function SparkCanvas(props: SparkCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <SparkCanvasInner {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function SparkCanvasInner({
   sparkId,
   items,
   canvasState,
   onCanvasStateChange,
+  onItemAdded,
 }: SparkCanvasProps) {
   // ── Selection state ──
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [activeGroupChat, setActiveGroupChat] = useState<{ groupId: string; name: string; itemIds: string[]; sessionId?: string | null } | null>(null);
+
+  // ── File drop state ──
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only reset if leaving the container (not entering a child)
+    if (e.currentTarget.contains(e.relatedTarget as globalThis.Node)) return;
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      ACCEPTED_TYPES.includes(f.type),
+    );
+    if (files.length === 0) return;
+
+    const dropPosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    setIsUploading(true);
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const form = new FormData();
+        form.append('file', file);
+        form.append('spark_id', sparkId);
+
+        const res = await fetch('/api/contentstack/upload-asset', {
+          method: 'POST',
+          body: form,
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+          alert(`Failed to upload ${file.name}: ${err.error}`);
+          continue;
+        }
+      }
+      onItemAdded?.();
+    } finally {
+      setIsUploading(false);
+    }
+  }, [sparkId, screenToFlowPosition, onItemAdded]);
 
   // Debounce ref for position updates
   const positionTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -292,8 +360,12 @@ export default function SparkCanvas({
   }, [activeGroupChat, onCanvasStateChange]);
 
   return (
-    <ReactFlowProvider>
-    <div className="w-full h-full relative">
+    <div
+      className="w-full h-full relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -323,6 +395,30 @@ export default function SparkCanvas({
         />
         <Controls className="!border-venus-gray-200 !shadow-sm" />
       </ReactFlow>
+
+      {/* Drop overlay */}
+      {(isDragOver || isUploading) && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-venus-purple/10 backdrop-blur-[2px] pointer-events-none">
+          <div className="border-2 border-dashed border-venus-purple rounded-2xl px-8 py-6 bg-white/80 dark:bg-surface/80 shadow-lg flex flex-col items-center gap-2">
+            {isUploading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-venus-purple border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm font-medium text-venus-purple">Uploading...</span>
+              </>
+            ) : (
+              <>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--venus-purple)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <span className="text-sm font-medium text-venus-purple">Drop files here</span>
+                <span className="text-xs text-venus-gray-500">Images & PDFs</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating toolbar for multi-select */}
       {selectedNodeIds.length >= 2 && (
@@ -356,6 +452,5 @@ export default function SparkCanvas({
         />
       )}
     </div>
-    </ReactFlowProvider>
   );
 }
