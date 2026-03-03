@@ -515,7 +515,7 @@ async function retrieveContext(
   };
 }
 
-// POST /api/chat - Chat with Claude Opus via RAG pipeline
+// POST /api/chat - Chat with Claude via RAG pipeline
 export async function POST(request: NextRequest) {
   const {
     spark_id,
@@ -536,171 +536,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let sessionId: string | null = requestSessionId || null;
-  let userMessageId: string | null = null;
-
-  if (!skip_persist) {
-    // Create a new session if none provided
-    if (!sessionId) {
-      const { data: newSession, error: sessionError } = await supabaseAdmin
-        .from('chat_sessions')
-        .insert({
-          spark_id,
-          title: message,
-          user_messages: [message],
-        })
-        .select()
-        .single();
-
-      if (sessionError) {
-        console.error('[chat] Failed to create session:', sessionError.message);
-      }
-      if (newSession) {
-        sessionId = newSession.id;
-      }
-    } else {
-      // Append user message to the existing session's user_messages array
-      await supabaseAdmin.rpc('append_session_user_message', {
-        p_session_id: sessionId,
-        p_message: message,
-      });
-    }
-
-    // Save the user message to chat_messages
-    const { data: savedMsg } = await supabaseAdmin
-      .from('chat_messages')
-      .insert({
-        spark_id,
-        session_id: sessionId,
-        role: 'user',
-        content: message,
-      })
-      .select('id')
-      .single();
-
-    userMessageId = savedMsg?.id || null;
-  }
-
-  // Load conversation history from this session (for multi-turn context)
-  let historyMessages: Anthropic.MessageParam[] = [];
-  if (sessionId && !skip_persist && userMessageId) {
-    const { data: priorMessages } = await supabaseAdmin
-      .from('chat_messages')
-      .select('role, content')
-      .eq('session_id', sessionId)
-      .neq('id', userMessageId)
-      .in('role', ['user', 'assistant'])
-      .order('created_at', { ascending: false })
-      .limit(30);
-
-    if (priorMessages && priorMessages.length > 0) {
-      // Reverse to chronological order (queried desc for limit efficiency)
-      historyMessages = priorMessages.reverse().map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      }));
-    }
-  }
-
-  // Retrieve context — scoped to specific items when canvas provides item IDs,
-  // otherwise fall back to broad RAG search across the entire Spark.
-  let ragContext: RetrievedContext;
-
-  if (Array.isArray(scoped_item_ids) && scoped_item_ids.length > 0) {
-    // Fetch the exact items the user selected on the canvas
-    const { data: scopedItems, error: scopedError } = await supabaseAdmin
-      .from('spark_items')
-      .select('id, type, title, content, summary, metadata')
-      .in('id', scoped_item_ids);
-
-    if (scopedError) {
-      console.error('[chat] scoped item fetch error:', scopedError.message);
-    }
-
-    const items = scopedItems || [];
-    const itemTexts = items
-      .map((item, i) => {
-        const meta = item.metadata as Record<string, unknown> | null;
-        const parts: string[] = [`${i + 1}. [${item.type}] ${item.title}`];
-
-        // Content body
-        if (item.content) {
-          parts.push((item.content as string).substring(0, 2000));
-        }
-        if (item.summary) {
-          parts.push(`Summary: ${item.summary}`);
-        }
-
-        // Type-specific metadata enrichment
-        if (meta) {
-          if (meta.url) parts.push(`URL: ${meta.url}`);
-          if (meta.og_description) parts.push(`Description: ${meta.og_description}`);
-          // Slack
-          if (meta.slack_channel_name) parts.push(`Slack channel: #${meta.slack_channel_name}`);
-          if (meta.slack_sender_name) parts.push(`Started by: ${meta.slack_sender_name}`);
-          if (meta.slack_message_count) parts.push(`Messages: ${meta.slack_message_count}`);
-          if (meta.slack_permalink) parts.push(`Permalink: ${meta.slack_permalink}`);
-          // Google Drive
-          if (meta.drive_web_view_link) parts.push(`Drive link: ${meta.drive_web_view_link}`);
-          // Contentstack
-          if (meta.cs_content_type_title) parts.push(`Content Type: ${meta.cs_content_type_title}`);
-          if (meta.cs_stack_name) parts.push(`Stack: ${meta.cs_stack_name}`);
-          if (meta.cs_entry_url) parts.push(`Entry URL: ${meta.cs_entry_url}`);
-          // Tags
-          if (meta.tags && Array.isArray(meta.tags)) parts.push(`Tags: ${(meta.tags as string[]).join(', ')}`);
-        }
-
-        return parts.join('\n');
-      })
-      .join('\n\n');
-
-    ragContext = {
-      text: items.length > 0
-        ? `\n\n## Focused Items (user-selected on canvas)\nThe user is asking specifically about these ${items.length} items. They deliberately selected each one, so you MUST reference every item in your response — include all of them in your Sources section. If an item seems less relevant, still acknowledge it and explain how it relates (or note what it contains). Do not reference other items unless the user asks you to search more broadly.\n\n${itemTexts}`
-        : '',
-      images: extractImageUrls(items as Record<string, unknown>[]),
-      items: items.map((item) => ({
-        id: item.id,
-        type: item.type as VectorContextItem['type'],
-        title: item.title,
-        similarity: 1,
-        summary: (item.summary as string) || null,
-      })),
-    };
-
-    addLogEntry({
-      service: 'supabase',
-      direction: 'event',
-      level: 'info',
-      summary: `Scoped context: ${items.length} item${items.length !== 1 ? 's' : ''} fetched directly`,
-    });
-  } else {
-    ragContext = await retrieveContext(spark_id, message);
-    addLogEntry({
-      service: 'supabase',
-      direction: 'event',
-      level: 'info',
-      summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
-    });
-  }
-
-  // ── Editor context (injected by ChatPanel when user has the editor open) ──
-  let editorContextSection = '';
-
-  if (editor_content && typeof editor_content === 'string' && editor_content.trim().length > 10) {
-    const truncated = editor_content.slice(0, 8000);
-    editorContextSection += `\n\n---\n## Active Spark Document\nThe user is editing a document in the Spark Editor. The current document content is below. You can reference it, answer questions about it, and suggest edits.\n\n${truncated}`;
-    if (editor_content.length > 8000) {
-      editorContextSection += '\n\n*(Document truncated — showing first 8,000 characters)*';
-    }
-  }
-
-  if (selected_text && typeof selected_text === 'string' && selected_text.trim().length > 0) {
-    editorContextSection += `\n\n## Selected Text\nThe user has highlighted the following text in the document and is asking about it specifically:\n\n> ${selected_text}\n\nWhen you suggest an improvement, rewrite, or replacement for this text, format your replacement inside a fenced code block with the language identifier \`proposal\` — like this:\n\n\`\`\`proposal\nYour replacement text here\n\`\`\`\n\nProvide exactly one \`proposal\` block per response when suggesting edits. Explain your changes in plain text outside the block. Use the RAG pipeline (semantic_search tool) to support your suggestions with context from the Spark's knowledge base where relevant.`;
-  }
-
-  const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection;
-
+  // Return the SSE stream immediately so the first byte is sent before any
+  // gateway timeout. All heavy work (DB, embedding, Anthropic) runs inside
+  // the stream's start() callback while the connection is already open.
   const encoder = new TextEncoder();
   const sseStream = new ReadableStream({
     async start(controller) {
@@ -708,6 +546,155 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
       try {
+        // ── Session & persistence (runs inside stream) ──────────
+        let sessionId: string | null = requestSessionId || null;
+        let userMessageId: string | null = null;
+
+        if (!skip_persist) {
+          if (!sessionId) {
+            const { data: newSession, error: sessionError } = await supabaseAdmin
+              .from('chat_sessions')
+              .insert({
+                spark_id,
+                title: message,
+                user_messages: [message],
+              })
+              .select()
+              .single();
+
+            if (sessionError) {
+              console.error('[chat] Failed to create session:', sessionError.message);
+            }
+            if (newSession) {
+              sessionId = newSession.id;
+            }
+          } else {
+            await supabaseAdmin.rpc('append_session_user_message', {
+              p_session_id: sessionId,
+              p_message: message,
+            });
+          }
+
+          const { data: savedMsg } = await supabaseAdmin
+            .from('chat_messages')
+            .insert({
+              spark_id,
+              session_id: sessionId,
+              role: 'user',
+              content: message,
+            })
+            .select('id')
+            .single();
+
+          userMessageId = savedMsg?.id || null;
+        }
+
+        // ── Conversation history ────────────────────────────────
+        let historyMessages: Anthropic.MessageParam[] = [];
+        if (sessionId && !skip_persist && userMessageId) {
+          const { data: priorMessages } = await supabaseAdmin
+            .from('chat_messages')
+            .select('role, content')
+            .eq('session_id', sessionId)
+            .neq('id', userMessageId)
+            .in('role', ['user', 'assistant'])
+            .order('created_at', { ascending: false })
+            .limit(30);
+
+          if (priorMessages && priorMessages.length > 0) {
+            historyMessages = priorMessages.reverse().map((m) => ({
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+            }));
+          }
+        }
+
+        // ── RAG context retrieval ───────────────────────────────
+        send({ type: 'status', content: 'Searching knowledge base...' });
+
+        let ragContext: RetrievedContext;
+
+        if (Array.isArray(scoped_item_ids) && scoped_item_ids.length > 0) {
+          const { data: scopedItems, error: scopedError } = await supabaseAdmin
+            .from('spark_items')
+            .select('id, type, title, content, summary, metadata')
+            .in('id', scoped_item_ids);
+
+          if (scopedError) {
+            console.error('[chat] scoped item fetch error:', scopedError.message);
+          }
+
+          const items = scopedItems || [];
+          const itemTexts = items
+            .map((item, i) => {
+              const meta = item.metadata as Record<string, unknown> | null;
+              const parts: string[] = [`${i + 1}. [${item.type}] ${item.title}`];
+              if (item.content) parts.push((item.content as string).substring(0, 2000));
+              if (item.summary) parts.push(`Summary: ${item.summary}`);
+              if (meta) {
+                if (meta.url) parts.push(`URL: ${meta.url}`);
+                if (meta.og_description) parts.push(`Description: ${meta.og_description}`);
+                if (meta.slack_channel_name) parts.push(`Slack channel: #${meta.slack_channel_name}`);
+                if (meta.slack_sender_name) parts.push(`Started by: ${meta.slack_sender_name}`);
+                if (meta.slack_message_count) parts.push(`Messages: ${meta.slack_message_count}`);
+                if (meta.slack_permalink) parts.push(`Permalink: ${meta.slack_permalink}`);
+                if (meta.drive_web_view_link) parts.push(`Drive link: ${meta.drive_web_view_link}`);
+                if (meta.cs_content_type_title) parts.push(`Content Type: ${meta.cs_content_type_title}`);
+                if (meta.cs_stack_name) parts.push(`Stack: ${meta.cs_stack_name}`);
+                if (meta.cs_entry_url) parts.push(`Entry URL: ${meta.cs_entry_url}`);
+                if (meta.tags && Array.isArray(meta.tags)) parts.push(`Tags: ${(meta.tags as string[]).join(', ')}`);
+              }
+              return parts.join('\n');
+            })
+            .join('\n\n');
+
+          ragContext = {
+            text: items.length > 0
+              ? `\n\n## Focused Items (user-selected on canvas)\nThe user is asking specifically about these ${items.length} items. They deliberately selected each one, so you MUST reference every item in your response — include all of them in your Sources section. If an item seems less relevant, still acknowledge it and explain how it relates (or note what it contains). Do not reference other items unless the user asks you to search more broadly.\n\n${itemTexts}`
+              : '',
+            images: extractImageUrls(items as Record<string, unknown>[]),
+            items: items.map((item) => ({
+              id: item.id,
+              type: item.type as VectorContextItem['type'],
+              title: item.title,
+              similarity: 1,
+              summary: (item.summary as string) || null,
+            })),
+          };
+
+          addLogEntry({
+            service: 'supabase',
+            direction: 'event',
+            level: 'info',
+            summary: `Scoped context: ${items.length} item${items.length !== 1 ? 's' : ''} fetched directly`,
+          });
+        } else {
+          ragContext = await retrieveContext(spark_id, message);
+          addLogEntry({
+            service: 'supabase',
+            direction: 'event',
+            level: 'info',
+            summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
+          });
+        }
+
+        // ── Editor context ──────────────────────────────────────
+        let editorContextSection = '';
+
+        if (editor_content && typeof editor_content === 'string' && editor_content.trim().length > 10) {
+          const truncated = editor_content.slice(0, 8000);
+          editorContextSection += `\n\n---\n## Active Spark Document\nThe user is editing a document in the Spark Editor. The current document content is below. You can reference it, answer questions about it, and suggest edits.\n\n${truncated}`;
+          if (editor_content.length > 8000) {
+            editorContextSection += '\n\n*(Document truncated — showing first 8,000 characters)*';
+          }
+        }
+
+        if (selected_text && typeof selected_text === 'string' && selected_text.trim().length > 0) {
+          editorContextSection += `\n\n## Selected Text\nThe user has highlighted the following text in the document and is asking about it specifically:\n\n> ${selected_text}\n\nWhen you suggest an improvement, rewrite, or replacement for this text, format your replacement inside a fenced code block with the language identifier \`proposal\` — like this:\n\n\`\`\`proposal\nYour replacement text here\n\`\`\`\n\nProvide exactly one \`proposal\` block per response when suggesting edits. Explain your changes in plain text outside the block. Use the RAG pipeline (semantic_search tool) to support your suggestions with context from the Spark's knowledge base where relevant.`;
+        }
+
+        const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection;
+
         // Send context items to client for 3D visualization (before any tool use/text)
         if (ragContext.items.length > 0) {
           send({ type: 'context', items: ragContext.items });
