@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
+import { ThemeToggle } from '@/components/ThemeProvider';
+import { ActivityLogButton } from '@/components/ActivityLogPanel';
 import ItemCard from '@/components/ItemCard';
 import WebResearchCard from '@/components/WebResearchCard';
 import AddItemModal from '@/components/AddItemModal';
@@ -382,28 +384,26 @@ function SparkWorkspacePage() {
   if (!spark) return null;
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+    <div className="h-screen flex flex-col">
 
-      {/* ── Spark Header ── */}
-      <div className="bg-surface border-b border-venus-gray-200 px-6 py-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push('/')}
-            className="p-1.5 rounded-md hover:bg-venus-gray-100 text-venus-gray-500 transition-colors"
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <div className="w-8 h-8 rounded-lg bg-venus-purple-light flex items-center justify-center">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--venus-purple)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-venus-gray-700 truncate">{spark.name}</h2>
-            {spark.description && (
-              <p className="text-sm text-venus-gray-500 truncate">{spark.description}</p>
-            )}
-          </div>
+      {/* ── Unified Header ── */}
+      <header className="h-14 bg-surface border-b border-venus-gray-200 flex items-center px-4 gap-3 shrink-0">
+        {/* Left: back, icon, title */}
+        <button
+          onClick={() => router.push('/')}
+          className="p-1.5 rounded-md hover:bg-venus-gray-100 text-venus-gray-500 transition-colors shrink-0"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div className="w-7 h-7 rounded-lg bg-venus-purple-light flex items-center justify-center shrink-0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--venus-purple)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+        </div>
+        <h1 className="text-sm font-semibold text-venus-gray-700 truncate">{spark.name}</h1>
+
+        {/* Right: presence, integrations, generate, logs, theme */}
+        <div className="ml-auto flex items-center gap-3 shrink-0">
           <PresenceAvatars
             users={collabUsers}
             localClientId={localClientId}
@@ -412,13 +412,15 @@ function SparkWorkspacePage() {
           <IntegrationsStatus />
           <button
             onClick={() => setLeftTab('generate')}
-            className="flex items-center gap-2 px-4 py-2 bg-venus-purple hover:bg-venus-purple-deep text-white text-sm font-semibold rounded-lg transition-colors shrink-0"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep text-white text-xs font-semibold rounded-lg transition-colors"
           >
-            <Wand2 size={15} />
+            <Wand2 size={13} />
             Generate
           </button>
+          <ActivityLogButton />
+          <ThemeToggle />
         </div>
-      </div>
+      </header>
 
       {/* ── Three-column layout ── */}
       <div ref={containerRef} className="flex-1 flex overflow-hidden">
