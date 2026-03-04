@@ -1,8 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { verifySlackSignature, sendEphemeralMessage, joinChannel } from '@/lib/slack';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export async function POST(request: Request) {
+  // Slack retries if it doesn't get a 200 within 3 seconds.
+  // Acknowledge retries immediately to stop the retry chain.
+  const retryNum = request.headers.get('X-Slack-Retry-Num');
+  if (retryNum) {
+    return NextResponse.json({ ok: true });
+  }
+
   // Verify request signature (uses SLACK_SIGNING_SECRET, not bot token)
   const { valid, body } = await verifySlackSignature(request);
   if (!valid) {
@@ -29,36 +36,37 @@ export async function POST(request: Request) {
   if (payload.type === 'event_callback') {
     const event = payload.event;
 
-    // Deduplicate retries — Slack sends x-slack-retry-num header
-    // We respond 200 immediately for all events to prevent retries
-
     if (event?.type === 'app_mention') {
       const channel: string = event.channel;
       const user: string = event.user;
       const threadTs: string | undefined = event.thread_ts;
       const messageTs: string = event.ts;
 
-      // Auto-join the channel so the bot can reply (fire-and-forget)
-      joinChannel(channel).catch(() => {});
+      // Schedule background work via after() so the runtime stays alive.
+      // Raw fire-and-forget promises get killed on hosted platforms.
+      after(async () => {
+        try {
+          // Auto-join the channel so the bot can reply
+          joinChannel(channel).catch(() => {});
 
-      // Must be inside a thread to save content
-      if (!threadTs) {
-        sendEphemeralMessage(channel, user, [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `:wave: Hi! I\'m *Spark Test*.\n\nTo save a thread to a Spark, @mention me *inside a thread reply*.\n\nYou can also right-click any message → *More message shortcuts* → *Save to Spark*.`,
-            },
-          },
-        ]).catch((err) => console.error('[slack/events] ephemeral error:', err));
+          if (!threadTs) {
+            await sendEphemeralMessage(channel, user, [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `:wave: Hi! I\'m *Spark Test*.\n\nTo save a thread to a Spark, @mention me *inside a thread reply*.\n\nYou can also right-click any message → *More message shortcuts* → *Save to Spark*.`,
+                },
+              },
+            ]);
+            return;
+          }
 
-        return NextResponse.json({ ok: true });
-      }
-
-      handleAppMention(channel, user, threadTs, messageTs).catch((err) =>
-        console.error('[slack/events] handleAppMention error:', err)
-      );
+          await handleAppMention(channel, user, threadTs, messageTs);
+        } catch (err) {
+          console.error('[slack/events] after() error:', err);
+        }
+      });
     }
   }
 

@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { addLogEntry } from './activity-logger';
 
 const SLACK_API = 'https://slack.com/api';
+const API_TIMEOUT_MS = 5_000;
 
 // ─── Bot token accessor ────────────────────────────────
 function getBotToken(): string | null {
@@ -69,6 +70,7 @@ async function resolveUserName(userId: string): Promise<string> {
   try {
     const res = await fetch(`${SLACK_API}/users.info?user=${userId}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     const data = await res.json();
     const name = data.user?.real_name || data.user?.name || userId;
@@ -117,6 +119,7 @@ export async function fetchThreadMessages(
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   const data = await res.json();
   const duration = Date.now() - start;
@@ -192,6 +195,7 @@ export async function getChannelName(channelId: string): Promise<string> {
   try {
     const res = await fetch(`${SLACK_API}/conversations.info?channel=${channelId}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     const data = await res.json();
     return data.channel?.name || channelId;
@@ -209,6 +213,7 @@ export async function getPermalink(channelId: string, messageTs: string): Promis
     const params = new URLSearchParams({ channel: channelId, message_ts: messageTs });
     const res = await fetch(`${SLACK_API}/chat.getPermalink?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     const data = await res.json();
     return data.ok ? data.permalink : null;
@@ -238,6 +243,7 @@ export async function sendEphemeralMessage(
       blocks,
       text: 'Choose a Spark to save this thread to',
     }),
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
 }
 
@@ -260,6 +266,7 @@ export async function postMessage(
       thread_ts: threadTs,
       text,
     }),
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
 }
 
@@ -281,6 +288,7 @@ export async function joinChannel(channelId: string): Promise<void> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ channel: channelId }),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
   } catch {
     // Non-fatal — bot may already be in channel or it's private
@@ -306,6 +314,7 @@ export async function openModal(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ trigger_id: triggerId, view }),
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
 
   if (!res.ok) {

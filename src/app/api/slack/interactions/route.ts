@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import {
   verifySlackSignature,
   fetchThreadMessages,
@@ -53,31 +53,35 @@ export async function POST(request: Request) {
     // message itself as the root (conversations.replies will return it + any replies)
     const threadTs = message.thread_ts || message.ts;
 
-    // Fetch Sparks synchronously so we can build the modal options immediately.
-    // views.open must be called within 3 seconds — no heavy work before this call.
-    const { data: sparks } = await supabaseAdmin
-      .from('sparks')
-      .select('id, name')
-      .eq('status', 'active')
-      .order('name');
-
-    if (!sparks || sparks.length === 0) {
-      await sendEphemeralMessage(channel.id, userId, [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: ':sparkles: No active Sparks found. Create one in Spark Foundry first!',
-          },
-        },
-      ]);
-      return new Response('', { status: 200 });
-    }
-
+    // Fetch Sparks and open modal — both must complete within 3s of trigger_id.
+    // Use Promise.allSettled to avoid one failure blocking the other.
     try {
+      const { data: sparks } = await supabaseAdmin
+        .from('sparks')
+        .select('id, name')
+        .eq('status', 'active')
+        .order('name')
+        .abortSignal(AbortSignal.timeout(2000));
+
+      if (!sparks || sparks.length === 0) {
+        // Use after() — we need to return 200 fast, ephemeral can arrive slightly later
+        after(async () => {
+          await sendEphemeralMessage(channel.id, userId, [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: ':sparkles: No active Sparks found. Create one in Spark Foundry first!',
+              },
+            },
+          ]).catch((err) => console.error('[slack/interactions] ephemeral error:', err));
+        });
+        return new Response('', { status: 200 });
+      }
+
       await openModal(triggerId, buildSparkPickerModal(channel.id, threadTs, sparks));
     } catch (err) {
-      console.error('[slack/interactions] openModal error:', err);
+      console.error('[slack/interactions] message_action error:', err);
     }
 
     return new Response('', { status: 200 });
@@ -105,10 +109,15 @@ export async function POST(request: Request) {
       const sparkId = view.state.values?.spark_select_block?.spark_select?.selected_option?.value;
 
       if (sparkId && meta.channel && meta.thread_ts) {
-        // Fire-and-forget — modal closes immediately while we do the heavy work
-        handleSendToSpark(meta.channel, meta.thread_ts, userId, sparkId).catch((err) =>
-          console.error('[slack/interactions] modal save error:', err)
-        );
+        // Use after() so the runtime stays alive for the heavy work.
+        // Raw fire-and-forget promises get killed on hosted platforms.
+        after(async () => {
+          try {
+            await handleSendToSpark(meta.channel, meta.thread_ts, userId, sparkId);
+          } catch (err) {
+            console.error('[slack/interactions] modal save error:', err);
+          }
+        });
       }
 
       // Return empty object → Slack closes the modal
@@ -144,9 +153,14 @@ export async function POST(request: Request) {
       return new Response('', { status: 200 });
     }
 
-    handleSendToSpark(meta.channel, meta.thread_ts, meta.user, sparkId).catch((err) =>
-      console.error('[slack/interactions] button save error:', err)
-    );
+    // Use after() so the runtime stays alive for the heavy work.
+    after(async () => {
+      try {
+        await handleSendToSpark(meta.channel, meta.thread_ts, meta.user, sparkId);
+      } catch (err) {
+        console.error('[slack/interactions] button save error:', err);
+      }
+    });
 
     return new Response('', { status: 200 });
   }
