@@ -545,6 +545,17 @@ export async function POST(request: NextRequest) {
       const send = (data: Record<string, unknown>) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
+      // Send an SSE comment immediately to flush response headers through
+      // the gateway. This prevents Contentstack Launch (or any reverse
+      // proxy) from timing out while we do DB + embedding work.
+      controller.enqueue(encoder.encode(': connected\n\n'));
+
+      // Periodic keepalive every 15s so long Anthropic calls don't
+      // trip idle-connection timeouts.
+      const keepalive = setInterval(() => {
+        try { controller.enqueue(encoder.encode(': keepalive\n\n')); } catch { /* stream closed */ }
+      }, 15_000);
+
       try {
         // ── Session & persistence (runs inside stream) ──────────
         let sessionId: string | null = requestSessionId || null;
@@ -954,6 +965,7 @@ export async function POST(request: NextRequest) {
           error instanceof Error ? error.message : 'Unknown error';
         send({ type: 'error', content: errorMessage });
       } finally {
+        clearInterval(keepalive);
         controller.close();
       }
     },
