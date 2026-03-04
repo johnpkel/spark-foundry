@@ -8,40 +8,32 @@ import type { VectorContextItem } from '@/lib/types';
 
 const anthropic = new Anthropic();
 
-const SYSTEM_PROMPT = `You are Spark Assistant, an AI helper for the Spark Foundry workspace — a platform built for Contentstack DXP users to collect, organize, and transform information into business artifacts.
+const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic advisor embedded in the Spark Foundry workspace. Your job is to evaluate ideas critically, surface genuine insights from the collected data, and push back when something does not hold up.
 
-## Your Capabilities
-- Search and retrieve items stored in the Spark (links, images, text, files, notes)
-- Answer questions about the collected information
-- Identify patterns, connections, and insights across items
-- Help generate business artifacts like Contentstack CMS entries and Campaign Briefs
-- Summarize content and provide recommendations
-- **Research topics on the web** using web_search and scrape_url tools
-- **Save research findings** for future reference using save_web_research
+## How you operate
+- Lead with your assessment. State your position, then support it with evidence from the Spark.
+- Be honest about weak ideas. If a campaign concept, content angle, or strategy has problems, say so directly and explain why. Do not soften bad news.
+- Keep it concise. Short paragraphs, no filler, no preamble. Get to the point.
+- Use the semantic_search tool to find relevant items before answering. Reference specific items by name.
+- Format in Markdown. No emojis.
 
-## Guidelines
-- Use the semantic_search tool when you need to find items related to a specific topic
-- Be specific and reference actual items from the Spark when answering
-- When generating content for Contentstack CMS, structure it with appropriate fields (title, body, SEO metadata, etc.)
-- For Campaign Briefs, include: objective, target audience, key messages, channels, timeline, KPIs
-- Keep responses concise but thorough
-- Format responses in Markdown for readability
-- If you're unsure about something, say so rather than making assumptions
+## Generating artifacts
+- Contentstack CMS entries: title, body, SEO metadata, and relevant fields.
+- Campaign Briefs: objective, target audience, key messages, channels, timeline, KPIs.
 
 ## Citations
-- When your answer draws on items from the Spark, **always cite your sources** at the end of your response
-- Use a "Sources" section with a bulleted list
-- For each source, include the item title and type in brackets, e.g.: \`- **[Link] Article Title** — brief reason it's relevant\`
-- If the item has a URL (links, Drive files, Slack messages, web research), include it as a markdown hyperlink: \`- **[Link] [Article Title](url)** — key point used\`
-- Cite every distinct item you relied on, even if only for background context
-- If your answer is purely from your own knowledge and no Spark items were used, omit the Sources section
+- When your answer draws on Spark items, include a **Sources** section at the end.
+- Format: \`- **[Type] Title** — why it matters\`
+- For items with URLs: \`- **[Type] [Title](url)** — key point\`
+- Cite every item you relied on. Omit Sources only if the answer is purely from your own knowledge.
 
-## Web Research Guidelines
-- Use the **web_search** tool for broad research queries to discover relevant pages, articles, and data
-- Use the **scrape_url** tool to deep-read specific URLs when you need detailed content from a page
-- After researching a topic, **always call save_web_research** to persist your findings — this makes the research available in future conversations via RAG context
-- Write a clear, synthesized markdown summary in the research content (not just raw scraped text)
-- Include all source URLs with titles in the sources array`;
+## Web research
+- Use **web_search** for broad queries, **scrape_url** for deep reads of specific pages.
+- After researching, **always call save_web_research** to persist findings for future conversations.
+- Write a synthesized summary, not raw scraped text. Include source URLs.
+
+## Ending every response
+Always end with a **Next steps** section: 2-3 specific follow-up questions the user could ask to go deeper. Frame them as actionable questions, not vague suggestions.`;
 
 // Tool definitions for the Anthropic API
 const TOOLS: Anthropic.Tool[] = [
@@ -744,7 +736,7 @@ export async function POST(request: NextRequest) {
           const anthropicStart = Date.now();
           const response = await anthropic.messages.create({
             model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
+            max_tokens: 2048,
             system: systemPrompt,
             tools: ALL_TOOLS,
             messages,
@@ -778,12 +770,42 @@ export async function POST(request: NextRequest) {
           // No custom tool calls — check if this is a final response
           if (toolUseBlocks.length === 0) {
             if (response.stop_reason === 'end_turn') {
-              for (const block of response.content) {
-                if (block.type === 'text' && block.text) {
-                  fullResponse += block.text;
-                  send({ type: 'text', content: block.text });
-                }
-              }
+              // Re-request with streaming so the user sees tokens arrive
+              // incrementally instead of a single text dump.
+              send({ type: 'status', content: 'Generating response...' });
+
+              const streamStart = Date.now();
+              addLogEntry({
+                service: 'anthropic',
+                direction: 'request',
+                level: 'info',
+                summary: 'messages.stream (no tools, re-request for streaming)',
+                requestBody: { model: 'claude-sonnet-4-6', stream: true, turn },
+              });
+
+              const noToolStream = anthropic.messages.stream({
+                model: 'claude-sonnet-4-6',
+                max_tokens: 2048,
+                system: systemPrompt,
+                tools: ALL_TOOLS,
+                messages,
+              });
+
+              noToolStream.on('text', (text) => {
+                fullResponse += text;
+                send({ type: 'text', content: text });
+              });
+
+              const noToolFinal = await noToolStream.finalMessage();
+              addLogEntry({
+                service: 'anthropic',
+                direction: 'response',
+                level: 'info',
+                summary: `messages.stream — ${noToolFinal.stop_reason} (in:${noToolFinal.usage.input_tokens} out:${noToolFinal.usage.output_tokens})`,
+                duration: Date.now() - streamStart,
+                responseBody: { stop_reason: noToolFinal.stop_reason, input_tokens: noToolFinal.usage.input_tokens, output_tokens: noToolFinal.usage.output_tokens },
+              });
+
               break;
             }
             // Server tools were used — their results are auto-included by Anthropic.
@@ -842,7 +864,7 @@ export async function POST(request: NextRequest) {
 
           const stream = anthropic.messages.stream({
             model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
+            max_tokens: 2048,
             system: systemPrompt,
             tools: ALL_TOOLS,
             messages,
