@@ -7,6 +7,8 @@
 
 import crypto from 'crypto';
 import { addLogEntry } from './activity-logger';
+import { supabaseAdmin } from './supabase/admin';
+import { generateEmbedding, buildItemText } from './embeddings';
 
 const SLACK_API = 'https://slack.com/api';
 const API_TIMEOUT_MS = 5_000;
@@ -321,4 +323,262 @@ export async function openModal(
     const data = await res.json();
     throw new Error(`views.open failed: ${data.error || res.status}`);
   }
+}
+
+// ─── Worker dispatch ────────────────────────────────────
+/**
+ * Fire-and-forget a task to the internal worker endpoint.
+ * Creates a new request lifecycle so the work runs to completion
+ * regardless of whether the calling function's response has been sent.
+ */
+export function dispatchToWorker(request: Request, payload: Record<string, unknown>) {
+  const origin = new URL(request.url).origin;
+  const secret = process.env.SLACK_SIGNING_SECRET;
+  fetch(`${origin}/api/slack/worker`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Slack-Worker-Secret': secret || '',
+    },
+    body: JSON.stringify(payload),
+  }).catch((err) => console.error('[slack] worker dispatch failed:', err));
+}
+
+// ─── Spark picker modal ─────────────────────────────────
+
+export function buildSparkPickerModal(
+  channelId: string,
+  threadTs: string,
+  sparks: { id: string; name: string }[]
+): Record<string, unknown> {
+  const privateMetadata = JSON.stringify({ channel: channelId, thread_ts: threadTs });
+
+  return {
+    type: 'modal',
+    callback_id: 'save_to_spark_modal',
+    private_metadata: privateMetadata,
+    title: { type: 'plain_text', text: 'Save to Spark', emoji: true },
+    submit: { type: 'plain_text', text: 'Save Thread', emoji: true },
+    close: { type: 'plain_text', text: 'Cancel' },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: ':sparkles: The full thread will be captured and embedded for AI retrieval in Spark Foundry.',
+        },
+      },
+      {
+        type: 'input',
+        block_id: 'spark_select_block',
+        label: { type: 'plain_text', text: 'Choose a Spark', emoji: true },
+        element: {
+          type: 'static_select',
+          action_id: 'spark_select',
+          placeholder: { type: 'plain_text', text: 'Select a Spark\u2026' },
+          options: sparks.map((s) => ({
+            text: { type: 'plain_text', text: s.name.slice(0, 75), emoji: true },
+            value: s.id,
+          })),
+        },
+      },
+    ],
+  };
+}
+
+// ─── Handle @mention in thread ──────────────────────────
+
+export async function handleAppMention(
+  channel: string,
+  user: string,
+  threadTs: string,
+  _messageTs: string
+) {
+  const { data: sparks, error } = await supabaseAdmin
+    .from('sparks')
+    .select('id, name')
+    .eq('status', 'active')
+    .order('name');
+
+  if (error || !sparks || sparks.length === 0) {
+    await sendEphemeralMessage(channel, user, [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: error
+            ? ':warning: Failed to load Sparks. Please try again.'
+            : ':sparkles: No active Sparks found. Create one in Spark Foundry first!',
+        },
+      },
+    ]);
+    return;
+  }
+
+  // Build Block Kit message with Spark picker dropdown + send button
+  const metadata = JSON.stringify({ channel, thread_ts: threadTs, user });
+
+  const blocks = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: ':sparkles: *Send this thread to a Spark*\nChoose a Spark and click Send.',
+      },
+    },
+    {
+      type: 'actions',
+      block_id: 'spark_picker',
+      elements: [
+        {
+          type: 'static_select',
+          action_id: 'select_spark',
+          placeholder: {
+            type: 'plain_text',
+            text: 'Choose a Spark...',
+          },
+          options: sparks.map((s) => ({
+            text: { type: 'plain_text', text: s.name.slice(0, 75) },
+            value: s.id,
+          })),
+        },
+        {
+          type: 'button',
+          action_id: 'send_to_spark',
+          text: { type: 'plain_text', text: 'Send to Spark' },
+          style: 'primary',
+          value: metadata,
+        },
+      ],
+    },
+  ];
+
+  await sendEphemeralMessage(channel, user, blocks);
+}
+
+// ─── Save thread to Spark ───────────────────────────────
+
+export async function handleSendToSpark(
+  channelId: string,
+  threadTs: string,
+  userId: string,
+  sparkId: string
+) {
+  const { data: spark } = await supabaseAdmin
+    .from('sparks')
+    .select('id, name')
+    .eq('id', sparkId)
+    .single();
+
+  if (!spark) {
+    console.error('[slack] Spark not found:', sparkId);
+    await sendEphemeralMessage(channelId, userId, [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: ':warning: Spark not found. It may have been deleted.' },
+      },
+    ]);
+    return;
+  }
+
+  // Fetch thread, channel name, and permalink concurrently
+  const [messages, channelName, permalink] = await Promise.all([
+    fetchThreadMessages(channelId, threadTs),
+    getChannelName(channelId),
+    getPermalink(channelId, threadTs),
+  ]);
+
+  if (messages.length === 0) {
+    await sendEphemeralMessage(channelId, userId, [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: ':warning: Could not fetch thread messages. Check that the bot has `channels:history` (or `groups:history`) scope.',
+        },
+      },
+    ]);
+    return;
+  }
+
+  const formattedContent = formatThreadContent(messages);
+  const senderName = messages[0].userName;
+  const title = `Slack thread from #${channelName}`;
+
+  const itemMetadata = {
+    slack_channel_id: channelId,
+    slack_channel_name: channelName,
+    slack_thread_ts: threadTs,
+    slack_message_count: messages.length,
+    slack_permalink: permalink,
+    slack_sender_name: senderName,
+    source: 'slack',
+  };
+
+  // Check for an existing item with the same thread to avoid duplicates
+  const { data: existing } = await supabaseAdmin
+    .from('spark_items')
+    .select('id')
+    .eq('spark_id', sparkId)
+    .eq('type', 'slack_message')
+    .eq("metadata->>'slack_thread_ts'", threadTs)
+    .maybeSingle();
+
+  if (existing) {
+    await postMessage(
+      channelId,
+      threadTs,
+      `:information_source: This thread is already in *${spark.name}*.`
+    );
+    return;
+  }
+
+  const { data: item, error } = await supabaseAdmin
+    .from('spark_items')
+    .insert({
+      spark_id: sparkId,
+      type: 'slack_message',
+      title,
+      content: formattedContent,
+      metadata: itemMetadata,
+    })
+    .select()
+    .single();
+
+  if (error || !item) {
+    console.error('[slack] Insert failed:', error?.message);
+    await sendEphemeralMessage(channelId, userId, [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: ':warning: Failed to save thread. Please try again.' },
+      },
+    ]);
+    return;
+  }
+
+  // Generate and save embedding (non-blocking — confirmation is sent first)
+  const itemData = {
+    title,
+    content: formattedContent,
+    type: 'slack_message',
+    metadata: itemMetadata as Record<string, unknown>,
+  };
+
+  generateEmbedding(buildItemText(itemData))
+    .then(async (embedding) => {
+      if (embedding) {
+        await supabaseAdmin
+          .from('spark_items')
+          .update({ embedding: JSON.stringify(embedding) })
+          .eq('id', item.id);
+      }
+    })
+    .catch((err) => console.error('[slack] Embedding failed:', err));
+
+  // Public confirmation in the thread so the whole team sees it
+  await postMessage(
+    channelId,
+    threadTs,
+    `:sparkles: Thread saved to *${spark.name}* (${messages.length} message${messages.length !== 1 ? 's' : ''})`
+  );
 }

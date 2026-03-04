@@ -1,6 +1,5 @@
-import { NextResponse, after } from 'next/server';
-import { verifySlackSignature, sendEphemeralMessage, joinChannel } from '@/lib/slack';
-import { supabaseAdmin } from '@/lib/supabase/admin';
+import { NextResponse } from 'next/server';
+import { verifySlackSignature, dispatchToWorker, joinChannel } from '@/lib/slack';
 
 export async function POST(request: Request) {
   // Slack retries if it doesn't get a 200 within 3 seconds.
@@ -42,102 +41,38 @@ export async function POST(request: Request) {
       const threadTs: string | undefined = event.thread_ts;
       const messageTs: string = event.ts;
 
-      // Schedule background work via after() so the runtime stays alive.
-      // Raw fire-and-forget promises get killed on hosted platforms.
-      after(async () => {
-        try {
-          // Auto-join the channel so the bot can reply
-          joinChannel(channel).catch(() => {});
+      // Auto-join the channel so the bot can reply
+      joinChannel(channel).catch(() => {});
 
-          if (!threadTs) {
-            await sendEphemeralMessage(channel, user, [
-              {
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `:wave: Hi! I\'m *Spark Test*.\n\nTo save a thread to a Spark, @mention me *inside a thread reply*.\n\nYou can also right-click any message → *More message shortcuts* → *Save to Spark*.`,
-                },
+      if (!threadTs) {
+        // Not in a thread — send help message via worker
+        dispatchToWorker(request, {
+          task: 'ephemeral',
+          channel,
+          user,
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `:wave: Hi! I'm *Spark Test*.\n\nTo save a thread to a Spark, @mention me *inside a thread reply*.\n\nYou can also right-click any message \u2192 *More message shortcuts* \u2192 *Save to Spark*.`,
               },
-            ]);
-            return;
-          }
-
-          await handleAppMention(channel, user, threadTs, messageTs);
-        } catch (err) {
-          console.error('[slack/events] after() error:', err);
-        }
-      });
+            },
+          ],
+        });
+      } else {
+        // In a thread — dispatch the heavy work to the worker endpoint
+        dispatchToWorker(request, {
+          task: 'app_mention',
+          channel,
+          user,
+          threadTs,
+          messageTs,
+        });
+      }
     }
   }
 
   // Always respond 200 within 3 seconds
   return NextResponse.json({ ok: true });
-}
-
-async function handleAppMention(
-  channel: string,
-  user: string,
-  threadTs: string,
-  _messageTs: string
-) {
-  const { data: sparks, error } = await supabaseAdmin
-    .from('sparks')
-    .select('id, name')
-    .eq('status', 'active')
-    .order('name');
-
-  if (error || !sparks || sparks.length === 0) {
-    await sendEphemeralMessage(channel, user, [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: error
-            ? ':warning: Failed to load Sparks. Please try again.'
-            : ':sparkles: No active Sparks found. Create one in Spark Foundry first!',
-        },
-      },
-    ]);
-    return;
-  }
-
-  // Build Block Kit message with Spark picker dropdown + send button
-  const metadata = JSON.stringify({ channel, thread_ts: threadTs, user });
-
-  const blocks = [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: ':sparkles: *Send this thread to a Spark*\nChoose a Spark and click Send.',
-      },
-    },
-    {
-      type: 'actions',
-      block_id: 'spark_picker',
-      elements: [
-        {
-          type: 'static_select',
-          action_id: 'select_spark',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Choose a Spark...',
-          },
-          options: sparks.map((s) => ({
-            text: { type: 'plain_text', text: s.name.slice(0, 75) },
-            value: s.id,
-          })),
-        },
-        {
-          type: 'button',
-          action_id: 'send_to_spark',
-          text: { type: 'plain_text', text: 'Send to Spark' },
-          style: 'primary',
-          value: metadata,
-        },
-      ],
-    },
-  ];
-
-  await sendEphemeralMessage(channel, user, blocks);
 }
