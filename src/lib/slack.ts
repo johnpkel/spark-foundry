@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { addLogEntry } from './activity-logger';
 import { supabaseAdmin } from './supabase/admin';
 import { generateEmbedding, buildItemText } from './embeddings';
+import { logWebhook } from './webhook-logger';
 
 const SLACK_API = 'https://slack.com/api';
 const API_TIMEOUT_MS = 5_000;
@@ -392,8 +393,16 @@ export async function handleAppMention(
   channel: string,
   user: string,
   threadTs: string,
-  _messageTs: string
+  _messageTs: string,
+  correlationId?: string
 ) {
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'outbound',
+    route: '/api/slack/worker',
+    summary: 'Fetching sparks for picker...',
+  });
+
   const { data: sparks, error } = await supabaseAdmin
     .from('sparks')
     .select('id, name')
@@ -401,6 +410,17 @@ export async function handleAppMention(
     .order('name');
 
   if (error || !sparks || sparks.length === 0) {
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      level: error ? 'error' : 'info',
+      route: '/api/slack/worker',
+      summary: error
+        ? `Failed to load sparks: ${error.message}`
+        : 'No active sparks found',
+      error: error?.message,
+    });
+
     await sendEphemeralMessage(channel, user, [
       {
         type: 'section',
@@ -454,6 +474,13 @@ export async function handleAppMention(
   ];
 
   await sendEphemeralMessage(channel, user, blocks);
+
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'internal',
+    route: '/api/slack/worker',
+    summary: `Sending ephemeral picker (${sparks.length} sparks)`,
+  });
 }
 
 // ─── Save thread to Spark ───────────────────────────────
@@ -462,8 +489,16 @@ export async function handleSendToSpark(
   channelId: string,
   threadTs: string,
   userId: string,
-  sparkId: string
+  sparkId: string,
+  correlationId?: string
 ) {
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'internal',
+    route: '/api/slack/worker',
+    summary: `send_to_spark started: sparkId=${sparkId}`,
+  });
+
   const { data: spark } = await supabaseAdmin
     .from('sparks')
     .select('id, name')
@@ -472,6 +507,13 @@ export async function handleSendToSpark(
 
   if (!spark) {
     console.error('[slack] Spark not found:', sparkId);
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      level: 'error',
+      route: '/api/slack/worker',
+      summary: `Spark not found: ${sparkId}`,
+    });
     await sendEphemeralMessage(channelId, userId, [
       {
         type: 'section',
@@ -488,7 +530,21 @@ export async function handleSendToSpark(
     getPermalink(channelId, threadTs),
   ]);
 
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'outbound',
+    route: '/api/slack/worker',
+    summary: `Thread fetched: ${messages.length} messages from #${channelName}`,
+  });
+
   if (messages.length === 0) {
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      level: 'error',
+      route: '/api/slack/worker',
+      summary: 'No messages in thread — missing scopes?',
+    });
     await sendEphemeralMessage(channelId, userId, [
       {
         type: 'section',
@@ -525,6 +581,12 @@ export async function handleSendToSpark(
     .maybeSingle();
 
   if (existing) {
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      route: '/api/slack/worker',
+      summary: `Duplicate detected — thread already in "${spark.name}"`,
+    });
     await postMessage(
       channelId,
       threadTs,
@@ -547,6 +609,14 @@ export async function handleSendToSpark(
 
   if (error || !item) {
     console.error('[slack] Insert failed:', error?.message);
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      level: 'error',
+      route: '/api/slack/worker',
+      summary: 'spark_items insert failed',
+      error: error?.message,
+    });
     await sendEphemeralMessage(channelId, userId, [
       {
         type: 'section',
@@ -556,6 +626,13 @@ export async function handleSendToSpark(
     return;
   }
 
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'internal',
+    route: '/api/slack/worker',
+    summary: `Item inserted: id=${item.id}`,
+  });
+
   // Generate and save embedding (non-blocking — confirmation is sent first)
   const itemData = {
     title,
@@ -564,6 +641,13 @@ export async function handleSendToSpark(
     metadata: itemMetadata as Record<string, unknown>,
   };
 
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'outbound',
+    route: '/api/slack/worker',
+    summary: 'Embedding generation started',
+  });
+
   generateEmbedding(buildItemText(itemData))
     .then(async (embedding) => {
       if (embedding) {
@@ -571,9 +655,25 @@ export async function handleSendToSpark(
           .from('spark_items')
           .update({ embedding: JSON.stringify(embedding) })
           .eq('id', item.id);
+        logWebhook({
+          correlation_id: correlationId,
+          direction: 'internal',
+          route: '/api/slack/worker',
+          summary: `Embedding saved for item ${item.id}`,
+        });
       }
     })
-    .catch((err) => console.error('[slack] Embedding failed:', err));
+    .catch((err) => {
+      console.error('[slack] Embedding failed:', err);
+      logWebhook({
+        correlation_id: correlationId,
+        direction: 'internal',
+        level: 'error',
+        route: '/api/slack/worker',
+        summary: 'Embedding generation failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
   // Public confirmation in the thread so the whole team sees it
   await postMessage(
@@ -581,4 +681,11 @@ export async function handleSendToSpark(
     threadTs,
     `:sparkles: Thread saved to *${spark.name}* (${messages.length} message${messages.length !== 1 ? 's' : ''})`
   );
+
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'internal',
+    route: '/api/slack/worker',
+    summary: `Confirmation posted to #${channelName}`,
+  });
 }

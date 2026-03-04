@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import { verifySlackSignature, dispatchToWorker, joinChannel } from '@/lib/slack';
+import { logWebhook, generateCorrelationId } from '@/lib/webhook-logger';
 
 export async function POST(request: Request) {
   // Slack retries if it doesn't get a 200 within 3 seconds.
   // Acknowledge retries immediately to stop the retry chain.
   const retryNum = request.headers.get('X-Slack-Retry-Num');
   if (retryNum) {
+    logWebhook({
+      direction: 'inbound',
+      route: '/api/slack/events',
+      summary: `Retry dedup: X-Slack-Retry-Num=${retryNum}`,
+    });
     return NextResponse.json({ ok: true });
   }
 
@@ -34,6 +40,15 @@ export async function POST(request: Request) {
   // Handle event callbacks
   if (payload.type === 'event_callback') {
     const event = payload.event;
+    const correlationId = generateCorrelationId('evt');
+
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'inbound',
+      route: '/api/slack/events',
+      summary: `Inbound event: ${event?.type ?? 'unknown'}`,
+      payload: { event_type: event?.type, channel: event?.channel, user: event?.user },
+    });
 
     if (event?.type === 'app_mention') {
       const channel: string = event.channel;
@@ -50,6 +65,7 @@ export async function POST(request: Request) {
           task: 'ephemeral',
           channel,
           user,
+          correlationId,
           blocks: [
             {
               type: 'section',
@@ -68,8 +84,16 @@ export async function POST(request: Request) {
           user,
           threadTs,
           messageTs,
+          correlationId,
         });
       }
+
+      logWebhook({
+        correlation_id: correlationId,
+        direction: 'internal',
+        route: '/api/slack/events',
+        summary: `Dispatched worker: ${threadTs ? 'app_mention' : 'ephemeral'}`,
+      });
     }
   }
 

@@ -7,6 +7,7 @@ import {
   dispatchToWorker,
 } from '@/lib/slack';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { logWebhook, generateCorrelationId } from '@/lib/webhook-logger';
 
 export async function POST(request: Request) {
   if (!process.env.SLACK_BOT_TOKEN) {
@@ -35,6 +36,15 @@ export async function POST(request: Request) {
   }
 
   const payloadType = payload.type as string;
+  const correlationId = generateCorrelationId('int');
+
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'inbound',
+    route: '/api/slack/interactions',
+    summary: `Inbound interaction: ${payloadType}`,
+    payload: { type: payloadType, callback_id: payload.callback_id },
+  });
 
   // ─── Message action (ellipsis menu shortcut) ────────
   // Triggered when user clicks "..." → "Save to Spark" on any message.
@@ -63,6 +73,7 @@ export async function POST(request: Request) {
           task: 'ephemeral',
           channel: channel.id,
           user: userId,
+          correlationId,
           blocks: [
             {
               type: 'section',
@@ -77,8 +88,23 @@ export async function POST(request: Request) {
       }
 
       await openModal(triggerId, buildSparkPickerModal(channel.id, threadTs, sparks));
+
+      logWebhook({
+        correlation_id: correlationId,
+        direction: 'outbound',
+        route: '/api/slack/interactions',
+        summary: `Opened modal with ${sparks.length} sparks`,
+      });
     } catch (err) {
       console.error('[slack/interactions] message_action error:', err);
+      logWebhook({
+        correlation_id: correlationId,
+        direction: 'internal',
+        level: 'error',
+        route: '/api/slack/interactions',
+        summary: 'message_action failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return new Response('', { status: 200 });
@@ -112,6 +138,14 @@ export async function POST(request: Request) {
           threadTs: meta.thread_ts,
           userId,
           sparkId,
+          correlationId,
+        });
+
+        logWebhook({
+          correlation_id: correlationId,
+          direction: 'internal',
+          route: '/api/slack/interactions',
+          summary: `Dispatched worker: send_to_spark (modal)`,
         });
       }
 
@@ -154,6 +188,14 @@ export async function POST(request: Request) {
       threadTs: meta.thread_ts,
       userId: meta.user,
       sparkId,
+      correlationId,
+    });
+
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      route: '/api/slack/interactions',
+      summary: `Dispatched worker: send_to_spark (button)`,
     });
 
     return new Response('', { status: 200 });

@@ -4,6 +4,7 @@ import {
   handleSendToSpark,
   sendEphemeralMessage,
 } from '@/lib/slack';
+import { logWebhook, generateCorrelationId } from '@/lib/webhook-logger';
 
 export async function POST(request: Request) {
   // Validate internal shared secret
@@ -20,6 +21,16 @@ export async function POST(request: Request) {
   }
 
   const task = payload.task as string;
+  const correlationId = (payload.correlationId as string) || generateCorrelationId('wrk');
+  const start = Date.now();
+
+  logWebhook({
+    correlation_id: correlationId,
+    direction: 'internal',
+    route: '/api/slack/worker',
+    summary: `Worker started: task=${task}`,
+    payload: { task, channel: payload.channel || payload.channelId },
+  });
 
   try {
     switch (task) {
@@ -29,6 +40,7 @@ export async function POST(request: Request) {
           payload.user as string,
           payload.threadTs as string,
           payload.messageTs as string,
+          correlationId,
         );
         break;
 
@@ -38,6 +50,7 @@ export async function POST(request: Request) {
           payload.threadTs as string,
           payload.userId as string,
           payload.sparkId as string,
+          correlationId,
         );
         break;
 
@@ -53,9 +66,28 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Unknown task: ${task}` }, { status: 400 });
     }
 
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      route: '/api/slack/worker',
+      summary: `Worker completed: task=${task}`,
+      duration_ms: Date.now() - start,
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(`[slack/worker] task=${task} error:`, err);
+
+    logWebhook({
+      correlation_id: correlationId,
+      direction: 'internal',
+      level: 'error',
+      route: '/api/slack/worker',
+      summary: `Worker failed: task=${task}`,
+      duration_ms: Date.now() - start,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
     return NextResponse.json({ error: 'Worker failed' }, { status: 500 });
   }
 }
