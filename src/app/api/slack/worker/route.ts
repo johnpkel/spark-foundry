@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   const correlationId = (payload.correlationId as string) || generateCorrelationId('wrk');
   const start = Date.now();
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'internal',
     route: '/api/slack/worker',
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Unknown task: ${task}` }, { status: 400 });
     }
 
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       route: '/api/slack/worker',
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error(`[slack/worker] task=${task} error:`, err);
 
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       level: 'error',

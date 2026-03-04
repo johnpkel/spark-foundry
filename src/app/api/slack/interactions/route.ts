@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   const payloadType = payload.type as string;
   const correlationId = generateCorrelationId('int');
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'inbound',
     route: '/api/slack/interactions',
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
         .abortSignal(AbortSignal.timeout(2000));
 
       if (!sparks || sparks.length === 0) {
-        dispatchToWorker(request, {
+        await dispatchToWorker(request, {
           task: 'ephemeral',
           channel: channel.id,
           user: userId,
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
 
       await openModal(triggerId, buildSparkPickerModal(channel.id, threadTs, sparks));
 
-      logWebhook({
+      await logWebhook({
         correlation_id: correlationId,
         direction: 'outbound',
         route: '/api/slack/interactions',
@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       });
     } catch (err) {
       console.error('[slack/interactions] message_action error:', err);
-      logWebhook({
+      await logWebhook({
         correlation_id: correlationId,
         direction: 'internal',
         level: 'error',
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
       const sparkId = view.state.values?.spark_select_block?.spark_select?.selected_option?.value;
 
       if (sparkId && meta.channel && meta.thread_ts) {
-        dispatchToWorker(request, {
+        await dispatchToWorker(request, {
           task: 'send_to_spark',
           channelId: meta.channel,
           threadTs: meta.thread_ts,
@@ -141,7 +141,7 @@ export async function POST(request: Request) {
           correlationId,
         });
 
-        logWebhook({
+        await logWebhook({
           correlation_id: correlationId,
           direction: 'internal',
           route: '/api/slack/interactions',
@@ -182,7 +182,7 @@ export async function POST(request: Request) {
       return new Response('', { status: 200 });
     }
 
-    dispatchToWorker(request, {
+    await dispatchToWorker(request, {
       task: 'send_to_spark',
       channelId: meta.channel,
       threadTs: meta.thread_ts,
@@ -191,7 +191,7 @@ export async function POST(request: Request) {
       correlationId,
     });
 
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       route: '/api/slack/interactions',

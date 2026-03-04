@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   // Acknowledge retries immediately to stop the retry chain.
   const retryNum = request.headers.get('X-Slack-Retry-Num');
   if (retryNum) {
-    logWebhook({
+    await logWebhook({
       direction: 'inbound',
       route: '/api/slack/events',
       summary: `Retry dedup: X-Slack-Retry-Num=${retryNum}`,
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const event = payload.event;
     const correlationId = generateCorrelationId('evt');
 
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'inbound',
       route: '/api/slack/events',
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
 
       if (!threadTs) {
         // Not in a thread — send help message via worker
-        dispatchToWorker(request, {
+        await dispatchToWorker(request, {
           task: 'ephemeral',
           channel,
           user,
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
         });
       } else {
         // In a thread — dispatch the heavy work to the worker endpoint
-        dispatchToWorker(request, {
+        await dispatchToWorker(request, {
           task: 'app_mention',
           channel,
           user,
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
         });
       }
 
-      logWebhook({
+      await logWebhook({
         correlation_id: correlationId,
         direction: 'internal',
         route: '/api/slack/events',

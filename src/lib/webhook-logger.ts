@@ -30,10 +30,12 @@ export function generateCorrelationId(prefix: string): string {
 }
 
 /**
- * Fire-and-forget insert into `webhook_logs`.
+ * Insert into `webhook_logs`. Returns a promise that can be awaited
+ * in routes that need the log persisted before the response is sent
+ * (critical on serverless where the runtime is killed after responding).
  * Never throws — errors are logged to console.
  */
-export function logWebhook(entry: WebhookLogEntry): void {
+export async function logWebhook(entry: WebhookLogEntry): Promise<void> {
   // Truncate payload to prevent bloat
   let payload = entry.payload;
   if (payload !== undefined) {
@@ -60,14 +62,12 @@ export function logWebhook(entry: WebhookLogEntry): void {
     error: entry.error ?? null,
   };
 
-  Promise.resolve(
-    supabaseAdmin
+  try {
+    const { error } = await supabaseAdmin
       .from('webhook_logs')
-      .insert(row)
-      .then(({ error }) => {
-        if (error) console.error('[webhook-logger] insert failed:', error.message);
-      })
-  ).catch((err: Error) => {
-    console.error('[webhook-logger] insert exception:', err.message);
-  });
+      .insert(row);
+    if (error) console.error('[webhook-logger] insert failed:', error.message);
+  } catch (err) {
+    console.error('[webhook-logger] insert exception:', (err as Error).message);
+  }
 }

@@ -328,21 +328,28 @@ export async function openModal(
 
 // ─── Worker dispatch ────────────────────────────────────
 /**
- * Fire-and-forget a task to the internal worker endpoint.
- * Creates a new request lifecycle so the work runs to completion
- * regardless of whether the calling function's response has been sent.
+ * Dispatch a task to the internal worker endpoint.
+ * Must be awaited — on serverless platforms the runtime is killed
+ * once the response is sent, so unawaited fetches get dropped.
+ * The dispatch itself is fast (just a POST), so it won't blow
+ * Slack's 3-second response budget.
  */
-export function dispatchToWorker(request: Request, payload: Record<string, unknown>) {
+export async function dispatchToWorker(request: Request, payload: Record<string, unknown>) {
   const origin = new URL(request.url).origin;
   const secret = process.env.SLACK_SIGNING_SECRET;
-  fetch(`${origin}/api/slack/worker`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Slack-Worker-Secret': secret || '',
-    },
-    body: JSON.stringify(payload),
-  }).catch((err) => console.error('[slack] worker dispatch failed:', err));
+  try {
+    await fetch(`${origin}/api/slack/worker`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Slack-Worker-Secret': secret || '',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(2_000),
+    });
+  } catch (err) {
+    console.error('[slack] worker dispatch failed:', err);
+  }
 }
 
 // ─── Spark picker modal ─────────────────────────────────
@@ -396,7 +403,7 @@ export async function handleAppMention(
   _messageTs: string,
   correlationId?: string
 ) {
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'outbound',
     route: '/api/slack/worker',
@@ -410,7 +417,7 @@ export async function handleAppMention(
     .order('name');
 
   if (error || !sparks || sparks.length === 0) {
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       level: error ? 'error' : 'info',
@@ -475,7 +482,7 @@ export async function handleAppMention(
 
   await sendEphemeralMessage(channel, user, blocks);
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'internal',
     route: '/api/slack/worker',
@@ -492,7 +499,7 @@ export async function handleSendToSpark(
   sparkId: string,
   correlationId?: string
 ) {
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'internal',
     route: '/api/slack/worker',
@@ -507,7 +514,7 @@ export async function handleSendToSpark(
 
   if (!spark) {
     console.error('[slack] Spark not found:', sparkId);
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       level: 'error',
@@ -530,7 +537,7 @@ export async function handleSendToSpark(
     getPermalink(channelId, threadTs),
   ]);
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'outbound',
     route: '/api/slack/worker',
@@ -538,7 +545,7 @@ export async function handleSendToSpark(
   });
 
   if (messages.length === 0) {
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       level: 'error',
@@ -581,7 +588,7 @@ export async function handleSendToSpark(
     .maybeSingle();
 
   if (existing) {
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       route: '/api/slack/worker',
@@ -609,7 +616,7 @@ export async function handleSendToSpark(
 
   if (error || !item) {
     console.error('[slack] Insert failed:', error?.message);
-    logWebhook({
+    await logWebhook({
       correlation_id: correlationId,
       direction: 'internal',
       level: 'error',
@@ -626,7 +633,7 @@ export async function handleSendToSpark(
     return;
   }
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'internal',
     route: '/api/slack/worker',
@@ -641,7 +648,7 @@ export async function handleSendToSpark(
     metadata: itemMetadata as Record<string, unknown>,
   };
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'outbound',
     route: '/api/slack/worker',
@@ -655,7 +662,7 @@ export async function handleSendToSpark(
           .from('spark_items')
           .update({ embedding: JSON.stringify(embedding) })
           .eq('id', item.id);
-        logWebhook({
+        await logWebhook({
           correlation_id: correlationId,
           direction: 'internal',
           route: '/api/slack/worker',
@@ -663,9 +670,9 @@ export async function handleSendToSpark(
         });
       }
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error('[slack] Embedding failed:', err);
-      logWebhook({
+      await logWebhook({
         correlation_id: correlationId,
         direction: 'internal',
         level: 'error',
@@ -682,7 +689,7 @@ export async function handleSendToSpark(
     `:sparkles: Thread saved to *${spark.name}* (${messages.length} message${messages.length !== 1 ? 's' : ''})`
   );
 
-  logWebhook({
+  await logWebhook({
     correlation_id: correlationId,
     direction: 'internal',
     route: '/api/slack/worker',
