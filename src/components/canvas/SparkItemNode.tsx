@@ -62,7 +62,7 @@ function SparkItemNode({ data }: NodeProps & { data: SparkItemNodeData }) {
           </span>
         </div>
 
-        {/* Body: thumbnail or summary */}
+        {/* Body: thumbnail, summary, or note content preview */}
         <div className="flex items-start gap-2">
           {thumb && (
             <img
@@ -77,9 +77,9 @@ function SparkItemNode({ data }: NodeProps & { data: SparkItemNodeData }) {
               <span className="text-[10px] font-bold text-red-500">PDF</span>
             </div>
           )}
-          {item.summary && (
-            <p className="text-[10px] leading-tight text-venus-gray-500 line-clamp-2 flex-1">
-              {item.summary}
+          {(item.summary || item.content) && (
+            <p className="text-[10px] leading-tight text-venus-gray-500 line-clamp-3 flex-1 min-w-0">
+              {item.summary || item.content}
             </p>
           )}
         </div>

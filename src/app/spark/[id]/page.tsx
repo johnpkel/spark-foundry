@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText,
   StickyNote, File, HardDrive, Box, Globe, Database, Paperclip, BarChart2,
-  MessageSquare, MessageSquareText, Target,
+  MessageSquare, MessageSquareText, Target, PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
@@ -183,6 +183,7 @@ function SparkWorkspacePage() {
   // Resizable three-column layout
   const [leftWidth, setLeftWidth] = useState(420);
   const [rightWidth, setRightWidth] = useState(280);
+  const [rightOpen, setRightOpen] = useState(true);
   const draggingHandle = useRef<'left' | 'right' | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -203,14 +204,15 @@ function SparkWorkspacePage() {
 
     if (draggingHandle.current === 'left') {
       const raw = e.clientX - rect.left;
-      const max = Math.min(rect.width * 0.4, rect.width - rightWidth - minMiddle);
+      const usedRight = rightOpen ? rightWidth : 0;
+      const max = Math.min(rect.width * 0.4, rect.width - usedRight - minMiddle);
       setLeftWidth(Math.min(Math.max(raw, 240), max));
     } else {
       const raw = rect.right - e.clientX;
       const max = Math.min(rect.width * 0.35, rect.width - leftWidth - minMiddle);
       setRightWidth(Math.min(Math.max(raw, 200), max));
     }
-  }, [leftWidth, rightWidth]);
+  }, [leftWidth, rightWidth, rightOpen]);
 
   const handlePointerUp = useCallback(() => {
     draggingHandle.current = null;
@@ -671,59 +673,72 @@ function SparkWorkspacePage() {
           )}
         </div>
 
-        {/* Right resize handle */}
-        <div
-          onPointerDown={handlePointerDown('right')}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
-        />
+        {/* Right drawer toggle tab */}
+        <button
+          onClick={() => setRightOpen(v => !v)}
+          className="shrink-0 w-5 flex items-center justify-center bg-venus-gray-100 hover:bg-venus-gray-200 border-l border-venus-gray-200 transition-colors cursor-pointer"
+          title={rightOpen ? 'Collapse panel' : 'Expand panel'}
+        >
+          {rightOpen ? <PanelRightClose size={14} className="text-venus-gray-400" /> : <PanelRightOpen size={14} className="text-venus-gray-400" />}
+        </button>
 
-        {/* Right column: Discussions / Scoring */}
-        <div className="shrink-0 flex flex-col bg-surface border-l border-venus-gray-200" style={{ width: rightWidth }}>
-          {/* Right tab bar */}
-          <div className="flex items-center gap-0.5 px-3 pt-3 pb-0 shrink-0 border-b border-venus-gray-200 bg-surface">
-            {([
-              { id: 'discussions' as RightTab, icon: MessageSquareText, label: 'Discussions', count: discussions.filter(t => !t.resolved).length || undefined },
-              { id: 'scoring' as RightTab, icon: Target, label: 'Scoring', count: undefined as number | undefined },
-            ]).map(({ id, icon: Icon, label, count }) => (
-              <button
-                key={id}
-                onClick={() => setRightTab(id)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 -mb-px ${
-                  rightTab === id
-                    ? 'border-venus-purple text-venus-purple bg-venus-purple-light/50'
-                    : 'border-transparent text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100'
-                }`}
-              >
-                <Icon size={13} />
-                {label}
-                {count != null && (
-                  <span className={`text-[10px] px-1 py-0.5 rounded-full ${
-                    rightTab === id
-                      ? 'bg-venus-purple/10 text-venus-purple'
-                      : 'bg-venus-gray-200 text-venus-gray-500'
-                  }`}>
-                    {count}
-                  </span>
+        {/* Right column: Discussions / Scoring (collapsible drawer) */}
+        {rightOpen && (
+          <>
+            {/* Right resize handle */}
+            <div
+              onPointerDown={handlePointerDown('right')}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              className="w-1 shrink-0 bg-venus-gray-200 hover:bg-venus-purple/40 active:bg-venus-purple/60 cursor-col-resize transition-colors touch-none"
+            />
+
+            <div className="shrink-0 flex flex-col bg-surface border-l border-venus-gray-200" style={{ width: rightWidth }}>
+              {/* Right tab bar */}
+              <div className="flex items-center gap-0.5 px-3 pt-3 pb-0 shrink-0 border-b border-venus-gray-200 bg-surface">
+                {([
+                  { id: 'discussions' as RightTab, icon: MessageSquareText, label: 'Discussions', count: discussions.filter(t => !t.resolved).length || undefined },
+                  { id: 'scoring' as RightTab, icon: Target, label: 'Scoring', count: undefined as number | undefined },
+                ]).map(({ id, icon: Icon, label, count }) => (
+                  <button
+                    key={id}
+                    onClick={() => setRightTab(id)}
+                    className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md transition-colors border-b-2 -mb-px ${
+                      rightTab === id
+                        ? 'border-venus-purple text-venus-purple bg-venus-purple-light/50'
+                        : 'border-transparent text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100'
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {label}
+                    {count != null && (
+                      <span className={`text-[10px] px-1 py-0.5 rounded-full ${
+                        rightTab === id
+                          ? 'bg-venus-purple/10 text-venus-purple'
+                          : 'bg-venus-gray-200 text-venus-gray-500'
+                      }`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {rightTab === 'discussions' ? (
+                  <DiscussionsPanel
+                    discussions={discussions}
+                    activeThreadId={activeThreadId}
+                    onActivateThread={setActiveThreadId}
+                    onResolveThread={handleResolveThread}
+                    onAddReply={handleAddReply}
+                  />
+                ) : (
+                  <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} />
                 )}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {rightTab === 'discussions' ? (
-              <DiscussionsPanel
-                discussions={discussions}
-                activeThreadId={activeThreadId}
-                onActivateThread={setActiveThreadId}
-                onResolveThread={handleResolveThread}
-                onAddReply={handleAddReply}
-              />
-            ) : (
-              <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} />
-            )}
-          </div>
-        </div>
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
 
