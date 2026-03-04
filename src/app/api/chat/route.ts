@@ -32,8 +32,11 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 - After researching, **always call save_web_research** to persist findings for future conversations.
 - Write a synthesized summary, not raw scraped text. Include source URLs.
 
+## Length
+Aim for 100-200 words. Only exceed this for full artifacts (campaign briefs, CMS entries). No bullet lists longer than 5 items. No introductory sentences — start with the substance.
+
 ## Ending every response
-Always end with a **Next steps** section: 2-3 specific follow-up questions the user could ask to go deeper. Frame them as actionable questions, not vague suggestions.`;
+End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.`;
 
 // Tool definitions for the Anthropic API
 const TOOLS: Anthropic.Tool[] = [
@@ -731,86 +734,61 @@ export async function POST(request: NextRequest) {
           web_search: 'Searching the web...',
         };
 
-        // Phase 1: Tool-use rounds (non-streaming, text is suppressed anyway)
+        // Unified streaming loop — every turn streams text to the client.
+        // No Phase 1/Phase 2 split; tool routing and final response use
+        // the same streaming path.
         for (let turn = 0; turn < 10; turn++) {
-          const anthropicStart = Date.now();
-          const response = await anthropic.messages.create({
+          send({ type: 'status', content: turn === 0 ? 'Generating response...' : 'Thinking...' });
+
+          const streamStart = Date.now();
+          addLogEntry({
+            service: 'anthropic',
+            direction: 'request',
+            level: 'info',
+            summary: `messages.stream (turn ${turn})`,
+            requestBody: { model: 'claude-sonnet-4-6', stream: true, turn },
+          });
+
+          const stream = anthropic.messages.stream({
             model: 'claude-sonnet-4-6',
-            max_tokens: 2048,
+            max_tokens: 1024,
             system: systemPrompt,
             tools: ALL_TOOLS,
             messages,
           });
+
+          stream.on('text', (text) => {
+            fullResponse += text;
+            send({ type: 'text', content: text });
+          });
+
+          const response = await stream.finalMessage();
           addLogEntry({
             service: 'anthropic',
             direction: 'response',
             level: 'info',
-            summary: `messages.create — ${response.stop_reason} (in:${response.usage.input_tokens} out:${response.usage.output_tokens})`,
-            duration: Date.now() - anthropicStart,
-            requestBody: { model: response.model, toolCount: ALL_TOOLS.length, turn },
+            summary: `messages.stream — ${response.stop_reason} (in:${response.usage.input_tokens} out:${response.usage.output_tokens})`,
+            duration: Date.now() - streamStart,
             responseBody: { stop_reason: response.stop_reason, input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
           });
 
-          // Detect custom tool_use blocks (our tools)
+          // Detect tool calls
           const toolUseBlocks = response.content.filter(
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
           );
-
-          // Detect server_tool_use blocks (Anthropic-hosted like web_search)
           const serverToolUseBlocks = response.content.filter(
             (b) => b.type === 'server_tool_use'
           );
 
-          // Send status events for server tool calls
           for (const stb of serverToolUseBlocks) {
             const name = (stb as unknown as { name: string }).name;
             send({ type: 'status', content: TOOL_LABELS[name] || 'Processing...' });
           }
 
-          // No custom tool calls — check if this is a final response
+          // No custom tool calls — done or server-tools-only
           if (toolUseBlocks.length === 0) {
-            if (response.stop_reason === 'end_turn') {
-              // Re-request with streaming so the user sees tokens arrive
-              // incrementally instead of a single text dump.
-              send({ type: 'status', content: 'Generating response...' });
-
-              const streamStart = Date.now();
-              addLogEntry({
-                service: 'anthropic',
-                direction: 'request',
-                level: 'info',
-                summary: 'messages.stream (no tools, re-request for streaming)',
-                requestBody: { model: 'claude-sonnet-4-6', stream: true, turn },
-              });
-
-              const noToolStream = anthropic.messages.stream({
-                model: 'claude-sonnet-4-6',
-                max_tokens: 2048,
-                system: systemPrompt,
-                tools: ALL_TOOLS,
-                messages,
-              });
-
-              noToolStream.on('text', (text) => {
-                fullResponse += text;
-                send({ type: 'text', content: text });
-              });
-
-              const noToolFinal = await noToolStream.finalMessage();
-              addLogEntry({
-                service: 'anthropic',
-                direction: 'response',
-                level: 'info',
-                summary: `messages.stream — ${noToolFinal.stop_reason} (in:${noToolFinal.usage.input_tokens} out:${noToolFinal.usage.output_tokens})`,
-                duration: Date.now() - streamStart,
-                responseBody: { stop_reason: noToolFinal.stop_reason, input_tokens: noToolFinal.usage.input_tokens, output_tokens: noToolFinal.usage.output_tokens },
-              });
-
-              break;
-            }
-            // Server tools were used — their results are auto-included by Anthropic.
-            // Continue the loop with the full response content so server_tool_result
-            // blocks are passed back correctly.
+            if (response.stop_reason === 'end_turn') break;
+            // Server tools only — continue loop
             messages = [
               ...messages,
               { role: 'assistant', content: response.content },
@@ -818,12 +796,11 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-          // Send status events for custom tool calls
+          // Execute custom tools
           for (const toolUse of toolUseBlocks) {
             send({ type: 'status', content: TOOL_LABELS[toolUse.name] || 'Processing...' });
           }
 
-          // Execute custom tools
           const toolResults = await Promise.all(
             toolUseBlocks.map(async (toolUse) => {
               addLogEntry({
@@ -848,99 +825,6 @@ export async function POST(request: NextRequest) {
             ...messages,
             { role: 'assistant', content: response.content },
             { role: 'user', content: toolResults },
-          ];
-
-          // Phase 2: After tool execution, stream the response token-by-token
-          send({ type: 'status', content: 'Generating response...' });
-
-          const streamStart = Date.now();
-          addLogEntry({
-            service: 'anthropic',
-            direction: 'request',
-            level: 'info',
-            summary: `messages.stream (after ${toolUseBlocks.length} tool${toolUseBlocks.length !== 1 ? 's' : ''})`,
-            requestBody: { model: 'claude-sonnet-4-6', stream: true },
-          });
-
-          const stream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 2048,
-            system: systemPrompt,
-            tools: ALL_TOOLS,
-            messages,
-          });
-
-          // Stream text to client in real-time as tokens arrive
-          stream.on('text', (text) => {
-            fullResponse += text;
-            send({ type: 'text', content: text });
-          });
-
-          const finalMessage = await stream.finalMessage();
-          addLogEntry({
-            service: 'anthropic',
-            direction: 'response',
-            level: 'info',
-            summary: `messages.stream — ${finalMessage.stop_reason} (in:${finalMessage.usage.input_tokens} out:${finalMessage.usage.output_tokens})`,
-            duration: Date.now() - streamStart,
-            responseBody: { stop_reason: finalMessage.stop_reason, input_tokens: finalMessage.usage.input_tokens, output_tokens: finalMessage.usage.output_tokens },
-          });
-
-          const finalToolUses = finalMessage.content.filter(
-            (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
-          );
-
-          // Also check for server tool uses in the streamed response
-          const finalServerToolUses = finalMessage.content.filter(
-            (b) => b.type === 'server_tool_use'
-          );
-          for (const stb of finalServerToolUses) {
-            const name = (stb as unknown as { name: string }).name;
-            send({ type: 'status', content: TOOL_LABELS[name] || 'Processing...' });
-          }
-
-          if (finalToolUses.length === 0) {
-            if (finalMessage.stop_reason === 'end_turn') {
-              break;
-            }
-            // Server tools only — continue loop
-            messages = [
-              ...messages,
-              { role: 'assistant', content: finalMessage.content },
-            ];
-            continue;
-          }
-
-          // More custom tool calls — execute tools, continue loop
-          for (const toolUse of finalToolUses) {
-            send({ type: 'status', content: TOOL_LABELS[toolUse.name] || 'Processing...' });
-          }
-
-          messages = [
-            ...messages,
-            { role: 'assistant', content: finalMessage.content },
-            {
-              role: 'user',
-              content: await Promise.all(
-                finalToolUses.map(async (toolUse) => {
-                  addLogEntry({
-                    service: 'internal',
-                    direction: 'event',
-                    level: 'info',
-                    summary: `Tool: ${toolUse.name}`,
-                    requestBody: toolUse.input,
-                  });
-                  return {
-                    type: 'tool_result' as const,
-                    tool_use_id: toolUse.id,
-                    content: await executeTool(
-                      toolUse.name,
-                      toolUse.input as Record<string, unknown>
-                    ),
-                  };
-                })
-              ),
-            },
           ];
         }
 
