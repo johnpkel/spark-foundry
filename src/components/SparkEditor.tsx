@@ -701,8 +701,14 @@ export default function SparkEditor({
             <button
               onMouseDown={(ev) => {
                 ev.preventDefault();
-                const { from, to } = e.state.selection;
-                const text = e.state.doc.textBetween(from, to, ' ');
+                const sel = e.state.selection;
+                const { from, to } = sel;
+                let text: string;
+                if (sel instanceof NodeSelection && sel.node.type.spec.atom) {
+                  text = sel.node.attrs.groupName || sel.node.attrs.title || sel.node.type.name;
+                } else {
+                  text = e.state.doc.textBetween(from, to, ' ');
+                }
                 if (text.trim()) onAskAI({ text, from, to });
               }}
               title="Ask Foundry about this text"
