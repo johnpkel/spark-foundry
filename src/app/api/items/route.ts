@@ -45,50 +45,61 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Schedule background enrichment work via after() so the serverless
-  // runtime stays alive until it completes (fire-and-forget promises get
-  // killed once the response is sent on platforms like Vercel).
+  // For link and Drive items, run scraping/export synchronously so the
+  // enriched item is returned in the response. This avoids reliance on
+  // after() which may not execute on all hosting platforms (e.g.
+  // Contentstack App Framework). Embedding generation is deferred to
+  // after() since it's not needed for display.
   if (type === 'link' && content) {
+    const enriched = await scrapeAndEnrichSync(data.id, title, content, enrichedMetadata);
+    // Defer embedding to after()
     after(async () => {
       try {
-        await scrapeAndEnrich(data.id, title, content, enrichedMetadata);
-      } catch (err) {
-        console.error('[items] scrapeAndEnrich failed:', err);
-      }
-    });
-  } else if (type === 'google_drive' && enrichedMetadata.drive_file_id) {
-    after(async () => {
-      try {
-        await exportDriveAndEnrich(
-          data.id,
+        await generateAndSaveEmbedding(data.id, {
           title,
-          enrichedMetadata.drive_file_id as string,
-          enrichedMetadata.drive_mime_type as string,
-          enrichedMetadata
-        );
+          content: enriched?.content || content,
+          summary: enriched?.summary || null,
+          type: 'link',
+          metadata: enriched?.metadata || enrichedMetadata,
+        });
       } catch (err) {
-        console.error('[items] exportDriveAndEnrich failed:', err);
+        console.error('[items] Embedding generation failed:', err);
       }
     });
+    // Return the enriched item so the client has scraped data immediately
+    if (enriched) {
+      return NextResponse.json({ ...data, ...enriched }, { status: 201 });
+    }
+  } else if (type === 'google_drive' && enrichedMetadata.drive_file_id) {
+    const enriched = await exportDriveSync(
+      data.id,
+      title,
+      enrichedMetadata.drive_file_id as string,
+      enrichedMetadata.drive_mime_type as string,
+      enrichedMetadata
+    );
+    after(async () => {
+      try {
+        await generateAndSaveEmbedding(data.id, {
+          title,
+          content: enriched?.content || null,
+          summary: enriched?.summary || null,
+          type: 'google_drive',
+          metadata: enriched?.metadata || enrichedMetadata,
+        });
+      } catch (err) {
+        console.error('[items] Embedding generation failed:', err);
+      }
+    });
+    if (enriched) {
+      return NextResponse.json({ ...data, ...enriched }, { status: 201 });
+    }
   } else {
     after(async () => {
       try {
-        const itemData = { title, content, type, metadata: enrichedMetadata };
-        const imageUrl = getImageUrl(itemData);
-
-        const embedding = imageUrl
-          ? await generateImageEmbedding(imageUrl, buildItemText(itemData))
-          : await generateEmbedding(buildItemText(itemData));
-
-        if (embedding && data) {
-          const { error: updateError } = await supabaseAdmin
-            .from('spark_items')
-            .update({ embedding: JSON.stringify(embedding) })
-            .eq('id', data.id);
-          if (updateError) {
-            console.error('[items] Failed to save embedding:', updateError.message);
-          }
-        }
+        await generateAndSaveEmbedding(data.id, {
+          title, content, type, metadata: enrichedMetadata,
+        });
       } catch (err) {
         console.error('[items] Embedding generation failed:', err);
       }
@@ -99,18 +110,18 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Background: scrape a link URL, update the item with rich content, then embed.
+ * Scrape a link URL and update the item with rich content synchronously.
+ * Returns the enriched fields so the POST handler can include them in the response.
  */
-async function scrapeAndEnrich(
+async function scrapeAndEnrichSync(
   itemId: string,
   title: string,
   url: string,
   existingMetadata: Record<string, unknown>
-) {
+): Promise<{ content: string; summary: string | null; metadata: Record<string, unknown> } | null> {
   const result = await scrapePage(url);
 
   if (result) {
-    // Build enriched fields from scrape
     const updatedMetadata = {
       ...existingMetadata,
       og_title: result.og_title,
@@ -125,101 +136,57 @@ async function scrapeAndEnrich(
     const scrapedContent = result.text || url;
     const summary = result.og_description || result.text?.slice(0, 300) || null;
 
-    // Update item with scraped content
     const { error: updateError } = await supabaseAdmin
       .from('spark_items')
-      .update({
-        content: scrapedContent,
-        summary,
-        metadata: updatedMetadata,
-      })
+      .update({ content: scrapedContent, summary, metadata: updatedMetadata })
       .eq('id', itemId);
 
     if (updateError) {
       console.error('[items] Failed to update scraped content:', updateError.message);
     }
 
-    // Generate embedding from rich content
-    const itemData = {
-      title,
-      content: scrapedContent,
-      summary,
-      type: 'link',
-      metadata: updatedMetadata,
-    };
-    const imageUrl = getImageUrl(itemData);
-
-    const embedding = imageUrl
-      ? await generateImageEmbedding(imageUrl, buildItemText(itemData))
-      : await generateEmbedding(buildItemText(itemData));
-
-    if (embedding) {
-      const { error: embError } = await supabaseAdmin
-        .from('spark_items')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', itemId);
-      if (embError) {
-        console.error('[items] Failed to save embedding:', embError.message);
-      }
-    }
-  } else {
-    // Scrape failed — mark status, embed with URL only
-    const failedMetadata = {
-      ...existingMetadata,
-      scrape_status: 'failed' as const,
-      scraped_at: new Date().toISOString(),
-    };
-
-    await supabaseAdmin
-      .from('spark_items')
-      .update({ metadata: failedMetadata })
-      .eq('id', itemId);
-
-    const itemData = { title, content: url, type: 'link', metadata: failedMetadata };
-    const embedding = await generateEmbedding(buildItemText(itemData));
-
-    if (embedding) {
-      await supabaseAdmin
-        .from('spark_items')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', itemId);
-    }
+    return { content: scrapedContent, summary, metadata: updatedMetadata };
   }
+
+  // Scrape failed — mark status
+  const failedMetadata = {
+    ...existingMetadata,
+    scrape_status: 'failed' as const,
+    scraped_at: new Date().toISOString(),
+  };
+
+  await supabaseAdmin
+    .from('spark_items')
+    .update({ metadata: failedMetadata })
+    .eq('id', itemId);
+
+  return null;
 }
 
 /**
- * Background: export Google Drive file content, update item, then embed.
- * Mirrors the scrapeAndEnrich pattern.
+ * Export Google Drive file content and update item synchronously.
+ * Returns enriched fields for the response.
  */
-async function exportDriveAndEnrich(
+async function exportDriveSync(
   itemId: string,
   title: string,
   driveFileId: string,
   driveMimeType: string,
   existingMetadata: Record<string, unknown>
-) {
+): Promise<{ content: string; summary: string | null; metadata: Record<string, unknown> } | null> {
   const accessToken = await getValidAccessToken();
   if (!accessToken) {
     console.error('[items] No valid Google access token for Drive export');
+    const failedMetadata = {
+      ...existingMetadata,
+      drive_export_status: 'failed',
+      drive_exported_at: new Date().toISOString(),
+    };
     await supabaseAdmin
       .from('spark_items')
-      .update({
-        metadata: {
-          ...existingMetadata,
-          drive_export_status: 'failed',
-          drive_exported_at: new Date().toISOString(),
-        },
-      })
+      .update({ metadata: failedMetadata })
       .eq('id', itemId);
-    // Embed with title only
-    const embedding = await generateEmbedding(title);
-    if (embedding) {
-      await supabaseAdmin
-        .from('spark_items')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', itemId);
-    }
-    return;
+    return null;
   }
 
   const exportedText = await exportFileContent(accessToken, driveFileId, driveMimeType);
@@ -234,54 +201,51 @@ async function exportDriveAndEnrich(
 
     const { error: updateError } = await supabaseAdmin
       .from('spark_items')
-      .update({
-        content: exportedText,
-        summary,
-        metadata: updatedMetadata,
-      })
+      .update({ content: exportedText, summary, metadata: updatedMetadata })
       .eq('id', itemId);
 
     if (updateError) {
       console.error('[items] Failed to update Drive content:', updateError.message);
     }
 
-    const itemData = {
-      title,
-      content: exportedText,
-      summary,
-      type: 'google_drive',
-      metadata: updatedMetadata,
-    };
-    const embedding = await generateEmbedding(buildItemText(itemData));
+    return { content: exportedText, summary, metadata: updatedMetadata };
+  }
 
-    if (embedding) {
-      const { error: embError } = await supabaseAdmin
-        .from('spark_items')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', itemId);
-      if (embError) {
-        console.error('[items] Failed to save Drive embedding:', embError.message);
-      }
-    }
-  } else {
-    // Export not possible (binary file) or failed — embed title only
-    const updatedMetadata = {
-      ...existingMetadata,
-      drive_export_status: exportedText === null ? 'success' : 'failed',
-      drive_exported_at: new Date().toISOString(),
-    };
+  // Export not possible (binary file) or failed
+  const updatedMetadata = {
+    ...existingMetadata,
+    drive_export_status: exportedText === null ? 'success' : 'failed',
+    drive_exported_at: new Date().toISOString(),
+  };
 
-    await supabaseAdmin
+  await supabaseAdmin
+    .from('spark_items')
+    .update({ metadata: updatedMetadata })
+    .eq('id', itemId);
+
+  return null;
+}
+
+/**
+ * Generate and save an embedding for an item. Used in after() callbacks.
+ */
+async function generateAndSaveEmbedding(
+  itemId: string,
+  itemData: { title: string; content: string | null; summary?: string | null; type: string; metadata: Record<string, unknown> }
+) {
+  const imageUrl = getImageUrl(itemData);
+
+  const embedding = imageUrl
+    ? await generateImageEmbedding(imageUrl, buildItemText(itemData))
+    : await generateEmbedding(buildItemText(itemData));
+
+  if (embedding) {
+    const { error: embError } = await supabaseAdmin
       .from('spark_items')
-      .update({ metadata: updatedMetadata })
+      .update({ embedding: JSON.stringify(embedding) })
       .eq('id', itemId);
-
-    const embedding = await generateEmbedding(title);
-    if (embedding) {
-      await supabaseAdmin
-        .from('spark_items')
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq('id', itemId);
+    if (embError) {
+      console.error('[items] Failed to save embedding:', embError.message);
     }
   }
 }
