@@ -8,6 +8,9 @@ import {
   generateImageEmbedding,
   buildItemText,
 } from '@/lib/embeddings';
+import { analyzeImage } from '@/lib/image-analysis';
+
+export const dynamic = 'force-dynamic';
 
 // POST /api/contentstack/import-assets — SSE asset import
 export async function POST(request: NextRequest) {
@@ -144,21 +147,37 @@ export async function POST(request: NextRequest) {
             } else {
               totalImported++;
 
-              // Fire-and-forget embedding
+              // Fire-and-forget embedding (with image analysis for images)
               if (isImage && asset.url) {
-                const text = buildItemText(inserted);
-                generateImageEmbedding(asset.url, text)
-                  .then(async (embedding) => {
+                (async () => {
+                  try {
+                    // Run Claude Vision analysis first
+                    const analysis = await analyzeImage(asset.url);
+                    let enrichedItem = inserted;
+                    if (analysis) {
+                      const updatedMeta = {
+                        ...inserted.metadata,
+                        image_analysis: { ...analysis, analyzed_at: new Date().toISOString() },
+                      };
+                      await supabaseAdmin
+                        .from('spark_items')
+                        .update({ metadata: updatedMeta })
+                        .eq('id', inserted.id);
+                      enrichedItem = { ...inserted, metadata: updatedMeta };
+                    }
+
+                    const text = buildItemText(enrichedItem);
+                    const embedding = await generateImageEmbedding(asset.url, text);
                     if (embedding) {
                       await supabaseAdmin
                         .from('spark_items')
                         .update({ embedding: JSON.stringify(embedding) })
                         .eq('id', inserted.id);
                     }
-                  })
-                  .catch((err) =>
-                    console.error('[import-assets] Image embedding error:', err)
-                  );
+                  } catch (err) {
+                    console.error('[import-assets] Image analysis/embedding error:', err);
+                  }
+                })();
               } else {
                 const text = buildItemText(inserted);
                 generateEmbedding(text)
@@ -202,8 +221,9 @@ export async function POST(request: NextRequest) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     },
   });
 }

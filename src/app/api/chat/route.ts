@@ -6,6 +6,8 @@ import { scrapePage } from '@/lib/scraper';
 import { addLogEntry } from '@/lib/activity-logger';
 import type { VectorContextItem } from '@/lib/types';
 
+export const dynamic = 'force-dynamic';
+
 const anthropic = new Anthropic();
 
 const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic advisor embedded in the Spark Foundry workspace. Your job is to evaluate ideas critically, surface genuine insights from the collected data, and push back when something does not hold up.
@@ -366,7 +368,7 @@ async function retrieveContext(
     console.log('[retrieveContext] No embedding — falling back to recent items');
     const { data } = await supabaseAdmin
       .from('spark_items')
-      .select('type, title, content, summary, metadata')
+      .select('id, type, title, content, summary, metadata')
       .eq('spark_id', sparkId)
       .order('created_at', { ascending: false })
       .limit(5);
@@ -383,7 +385,13 @@ async function retrieveContext(
     return {
       text: `\n\n## Recent Items in This Spark\n${itemTexts}`,
       images: extractImageUrls(data as Record<string, unknown>[]),
-      items: [],
+      items: data.map((item, i) => ({
+        id: item.id as string,
+        type: item.type as VectorContextItem['type'],
+        title: item.title as string,
+        similarity: 0.5 - i * 0.05,
+        summary: (item.summary as string) || null,
+      })),
     };
   }
 
@@ -462,7 +470,7 @@ async function retrieveContext(
     console.log('[retrieveContext] Vector search failed/empty — falling back to recent items');
     const { data: recent } = await supabaseAdmin
       .from('spark_items')
-      .select('type, title, content, summary, metadata')
+      .select('id, type, title, content, summary, metadata')
       .eq('spark_id', sparkId)
       .order('created_at', { ascending: false })
       .limit(5);
@@ -474,6 +482,14 @@ async function retrieveContext(
       return { text: '', images: [], items: [] };
     }
 
+    const recentItems: VectorContextItem[] = recent.map((item, i) => ({
+      id: item.id as string,
+      type: item.type as VectorContextItem['type'],
+      title: item.title as string,
+      similarity: 0.5 - i * 0.05,
+      summary: (item.summary as string) || null,
+    }));
+
     const recentTexts = recent
       .map(
         (item, i) =>
@@ -484,7 +500,7 @@ async function retrieveContext(
     return {
       text: `\n\n## Recent Items in This Spark\n${recentTexts}${sessionContextText}${webResearchContextText}`,
       images: extractImageUrls(recent as Record<string, unknown>[]),
-      items: webResearchContextItems,
+      items: [...recentItems, ...webResearchContextItems],
     };
   }
 
@@ -702,9 +718,7 @@ export async function POST(request: NextRequest) {
         const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection;
 
         // Send context items to client for 3D visualization (before any tool use/text)
-        if (ragContext.items.length > 0) {
-          send({ type: 'context', items: ragContext.items });
-        }
+        send({ type: 'context', items: ragContext.items });
 
         // Build multimodal user message: text + any images from RAG context
         const userContent: Anthropic.ContentBlockParam[] = [
@@ -880,8 +894,9 @@ export async function POST(request: NextRequest) {
   return new Response(sseStream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     },
   });
 }

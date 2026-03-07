@@ -8,6 +8,8 @@ import {
   type ClarityMetricData,
 } from '@/lib/clarity/api';
 
+export const dynamic = 'force-dynamic';
+
 const INSERT_BATCH_SIZE = 25;
 const EMBED_BATCH_SIZE = 50;
 
@@ -150,8 +152,9 @@ export async function POST(request: NextRequest) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     },
   });
 }
