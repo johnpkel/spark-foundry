@@ -79,6 +79,16 @@ export interface SparkItemMetadata {
   clarity_dimensions?: string;
   clarity_num_days?: number;
   clarity_imported_at?: string;
+  // Image analysis fields (Claude Vision)
+  image_analysis?: {
+    ocr_text: string;
+    objects: string[];
+    scene_description: string;
+    image_type: string;
+    short_summary: string;
+    full_description: string;
+    analyzed_at: string;
+  };
   [key: string]: unknown;
 }
 

@@ -6,6 +6,7 @@ import {
   buildItemText,
   getImageUrl,
 } from '@/lib/embeddings';
+import { analyzeImage } from '@/lib/image-analysis';
 import { scrapePage } from '@/lib/scraper';
 import { getValidAccessToken } from '@/lib/google/oauth';
 import { exportFileContent } from '@/lib/google/drive';
@@ -97,8 +98,26 @@ export async function POST(request: NextRequest) {
   } else {
     after(async () => {
       try {
+        let finalMetadata = enrichedMetadata;
+
+        // For image items, run Claude Vision analysis first
+        const imageUrl = getImageUrl({ type, content, metadata: enrichedMetadata });
+        if (imageUrl) {
+          const analysis = await analyzeImage(imageUrl);
+          if (analysis) {
+            finalMetadata = {
+              ...finalMetadata,
+              image_analysis: { ...analysis, analyzed_at: new Date().toISOString() },
+            };
+            await supabaseAdmin
+              .from('spark_items')
+              .update({ metadata: finalMetadata })
+              .eq('id', data.id);
+          }
+        }
+
         await generateAndSaveEmbedding(data.id, {
-          title, content, type, metadata: enrichedMetadata,
+          title, content, type, metadata: finalMetadata,
         });
       } catch (err) {
         console.error('[items] Embedding generation failed:', err);

@@ -218,14 +218,32 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, statusMessage]);
 
+  const initialLoadDone = useRef(false);
+
   const fetchSessions = useCallback(async () => {
     try {
       const res = await fetch(`/api/chat/sessions?spark_id=${sparkId}`);
-      if (res.ok) setSessions(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data);
+        return data as ChatSession[];
+      }
     } catch { /* silently fail */ }
+    return [];
   }, [sparkId]);
 
-  useEffect(() => { fetchSessions(); }, [fetchSessions]);
+  // On mount, fetch sessions and auto-open the most recent one
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    (async () => {
+      const loaded = await fetchSessions();
+      if (loaded.length > 0) {
+        handleSelectSession(loaded[0].id);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-generate "Did you know" fact on mount when items exist
   useEffect(() => {
@@ -390,7 +408,7 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
     }
   };
 
-  const handleSelectSession = async (sessionId: string) => {
+  const handleSelectSession = useCallback(async (sessionId: string) => {
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}`);
       if (!res.ok) return;
@@ -405,7 +423,7 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
           }))
       );
     } catch { /* silently fail */ }
-  };
+  }, []);
 
   const handleNewChat = () => {
     setActiveSessionId(null);

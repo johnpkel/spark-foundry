@@ -222,6 +222,20 @@ export function buildItemText(item: {
     parts.push(`Dimensions: ${meta.clarity_dimensions}`);
   }
 
+  // Image analysis from Claude Vision
+  if (meta?.image_analysis) {
+    const ia = meta.image_analysis as {
+      full_description?: string;
+      ocr_text?: string;
+      objects?: string[];
+      scene_description?: string;
+    };
+    if (ia.full_description) parts.push(`Image description: ${ia.full_description}`);
+    if (ia.ocr_text) parts.push(`Text in image: ${ia.ocr_text}`);
+    if (ia.objects?.length) parts.push(`Objects: ${ia.objects.join(', ')}`);
+    if (ia.scene_description) parts.push(`Scene: ${ia.scene_description}`);
+  }
+
   return parts.join('\n');
 }
 
