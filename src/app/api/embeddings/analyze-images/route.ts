@@ -57,10 +57,14 @@ export async function POST(request: NextRequest) {
         image_analysis: { ...analysis, analyzed_at: new Date().toISOString() },
       };
 
-      // Update metadata
+      // Update metadata + write analysis text into content/summary
       await supabaseAdmin
         .from('spark_items')
-        .update({ metadata: updatedMeta })
+        .update({
+          metadata: updatedMeta,
+          content: analysis.full_description || item.content || null,
+          summary: analysis.short_summary || item.summary || null,
+        })
         .eq('id', item.id);
 
       // Regenerate embedding with enriched text

@@ -17,7 +17,7 @@ const typeConfig = {
   link: { icon: Link2, color: 'bg-venus-blue-light text-venus-blue', label: 'Link' },
   image: { icon: Image, color: 'bg-venus-green-light text-venus-green', label: 'Image' },
   text: { icon: FileText, color: 'bg-venus-purple-light text-venus-purple', label: 'Text' },
-  file: { icon: File, color: 'bg-venus-yellow-light text-venus-yellow', label: 'File' },
+  file: { icon: File, color: 'bg-venus-yellow-light text-venus-yellow', label: 'Docs' },
   note: { icon: StickyNote, color: 'bg-venus-yellow-light text-venus-yellow', label: 'Note' },
   google_drive: { icon: HardDrive, color: 'bg-venus-green-light text-venus-green', label: 'Drive' },
   slack_message: { icon: SlackIcon, color: 'bg-venus-blue-light text-venus-blue', label: 'Slack' },

@@ -31,7 +31,7 @@ const itemTypes: { type: ItemType; label: string; icon: typeof Link2; descriptio
   { type: 'text', label: 'Text', icon: FileText, description: 'Add a block of text or article content' },
   { type: 'note', label: 'Note', icon: StickyNote, description: 'Add a quick note or observation' },
   { type: 'image', label: 'Image', icon: Image, description: 'Add an image URL' },
-  { type: 'file', label: 'File', icon: File, description: 'Reference an external file' },
+  { type: 'file', label: 'Docs', icon: File, description: 'Add a PDF, Word doc, or other document' },
   { type: 'google_drive', label: 'Drive', icon: HardDrive, description: 'Add a file from Google Drive' },
   { type: 'contentstack_entry', label: 'CS Entries', icon: Database, description: 'Import entries from Contentstack' },
   { type: 'contentstack_asset', label: 'CS Assets', icon: Paperclip, description: 'Import assets from Contentstack' },
@@ -43,7 +43,7 @@ const contentLabel: Record<string, string> = {
   text: 'Content',
   note: 'Note',
   image: 'Image URL',
-  file: 'File URL or Path',
+  file: 'Document URL or Path',
   google_drive: 'Google Drive File',
 };
 

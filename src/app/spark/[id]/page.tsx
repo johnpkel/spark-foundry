@@ -24,6 +24,8 @@ import SparkEditor from '@/components/SparkEditor';
 import PresenceAvatars from '@/components/PresenceAvatars';
 import type { CollabUser } from '@/components/PresenceAvatars';
 import SparkCanvasDynamic from '@/components/canvas/SparkCanvasDynamic';
+import DropOverlay from '@/components/DropOverlay';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type { CommentSubmitData } from '@/components/CommentPopover';
 import { EditorContextProvider, useEditorContext } from '@/lib/editor-context';
 import type { EditorSelection } from '@/lib/editor-context';
@@ -255,10 +257,19 @@ function SparkWorkspacePage() {
     loadSparkData();
   }, [loadSparkData]);
 
+  // Items panel file drop zone
+  const itemsDrop = useFileDrop({ sparkId, onItemAdded: loadSparkData });
+
   const handleDeleteItem = async (itemId: string) => {
     const res = await fetch(`/api/items/${itemId}`, { method: 'DELETE' });
     if (res.ok) {
       setItems(prev => prev.filter(i => i.id !== itemId));
+      setCanvasState(prev => ({
+        nodePositions: prev.nodePositions.filter(p => p.itemId !== itemId),
+        groups: prev.groups
+          .map(g => ({ ...g, itemIds: g.itemIds.filter(id => id !== itemId) }))
+          .filter(g => g.itemIds.length > 0),
+      }));
     }
   };
 
@@ -277,7 +288,7 @@ function SparkWorkspacePage() {
     link: { icon: Link2, label: 'Links' },
     image: { icon: Image, label: 'Images' },
     text: { icon: FileText, label: 'Text' },
-    file: { icon: File, label: 'Files' },
+    file: { icon: File, label: 'Docs' },
     note: { icon: StickyNote, label: 'Notes' },
     google_drive: { icon: HardDrive, label: 'Drive' },
     web_research: { icon: Globe, label: 'Research' },
@@ -471,7 +482,8 @@ function SparkWorkspacePage() {
 
             {/* Items list */}
             {leftTab === 'items' && (
-              <div className="flex-1 overflow-y-auto px-4 py-4">
+              <div className="flex-1 overflow-y-auto px-4 py-4 relative" {...itemsDrop.dragHandlers}>
+                <DropOverlay isDragOver={itemsDrop.isDragOver} isUploading={itemsDrop.isUploading} />
                 {/* Type filter chips */}
                 {availableTypes.length > 1 && (
                   <div className="flex flex-wrap gap-1.5 mb-4">
@@ -581,10 +593,10 @@ function SparkWorkspacePage() {
               </div>
             )}
 
-            {/* Chat */}
-            {leftTab === 'chat' && (
-              <ChatPanel sparkId={sparkId} itemCount={items.length} />
-            )}
+            {/* Chat — always mounted to preserve state across tab switches */}
+            <div className={`${leftTab === 'chat' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}`}>
+              <ChatPanel sparkId={sparkId} itemCount={items.length} items={items} groups={canvasState.groups} onItemAdded={loadSparkData} />
+            </div>
 
             {/* Generate */}
             {leftTab === 'generate' && (
@@ -646,6 +658,7 @@ function SparkWorkspacePage() {
                 sparkItems={items}
                 onPresenceChange={handlePresenceChange}
                 collabNameOverride={collabNameOverride}
+                onItemAdded={loadSparkData}
               />
             </div>
           )}

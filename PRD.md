@@ -72,7 +72,9 @@ Items are the atomic units of content in a Spark. Each type has specific ingesti
 
 ## 4. RAG Pipeline
 
-The RAG pipeline is the core intelligence layer — it transforms heterogeneous content into a unified semantic search space and powers the AI chat assistant.
+At the heart of Spark Foundry lies a **multimodal Retrieval-Augmented Generation pipeline** — a three-phase architecture that ingests heterogeneous content from disparate sources, projects it into a unified 1024-dimensional semantic manifold via Voyage AI's multimodal encoder, and orchestrates agentic retrieval at inference time through Claude's autonomous tool-use loop.
+
+The pipeline achieves **cross-modal semantic unification**: text documents, visual assets, conversational threads, CMS entries, and analytics telemetry all coexist as neighbors in a shared vector space, enabling the retrieval layer to surface contextually relevant content regardless of its original modality. Ingestion is non-blocking — embeddings are generated asynchronously via fire-and-forget callbacks, ensuring that content acquisition never blocks the user's workflow. At query time, the LLM acts as an autonomous retrieval orchestrator, dynamically selecting between vector similarity search (cosine distance over pgvector indices), lexical keyword matching, live web retrieval, and deep URL scraping — composing multi-hop retrieval strategies without explicit user instruction.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -164,14 +166,19 @@ The RAG pipeline is the core intelligence layer — it transforms heterogeneous 
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Pipeline Details
+### Pipeline Specifications
 
-- **Embedding model:** Voyage AI `voyage-multimodal-3` (1024 dimensions)
-- **Vector storage:** Supabase pgvector (`spark_items.embedding` column)
-- **Similarity function:** Cosine similarity via `match_spark_items` RPC
-- **Batch processing:** 50 items per embedding batch for bulk imports
-- **Async generation:** Embeddings generated via `after()` callback (fire-and-forget)
-- **Multimodal unification:** Text and images share the same 1024-dim vector space
+| Parameter | Value |
+|---|---|
+| **Encoder** | Voyage AI `voyage-multimodal-3` — a joint text-image embedding model |
+| **Dimensionality** | 1024-dim dense vectors (shared cross-modal latent space) |
+| **Index** | Supabase pgvector with cosine distance (`match_spark_items` RPC) |
+| **Retrieval threshold** | Cosine similarity ≥ 0.3, top-k = 10 |
+| **Batch cardinality** | 50 items per embedding request (bulk import pipeline) |
+| **Latency strategy** | Non-blocking `after()` callbacks — ingestion returns immediately; embedding generation proceeds asynchronously |
+| **Query encoding** | Asymmetric — queries use `input_type: "query"` for optimized retrieval alignment against `input_type: "document"` corpus vectors |
+| **Text assembly** | `buildItemText()` concatenates title, body, summary, structured metadata, image analysis transcriptions, and tags into a single embedding-ready document |
+| **Multimodal fusion** | Items with visual assets pass both the image tensor and assembled text to the multimodal encoder, producing a single vector that captures both visual semantics and textual context |
 
 ---
 

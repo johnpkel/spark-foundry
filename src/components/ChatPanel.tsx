@@ -8,8 +8,12 @@ import {
 import ReactMarkdown from 'react-markdown';
 import ChatSessionSidebar from './ChatSessionSidebar';
 import VectorVisualization from './VectorVisualizationDynamic';
+import ChatMentionDropdown from './ChatMentionDropdown';
+import type { MentionOption } from './ChatMentionDropdown';
+import DropOverlay from './DropOverlay';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import { useEditorContext } from '@/lib/editor-context';
-import type { ChatSession, VectorContextItem } from '@/lib/types';
+import type { ChatSession, VectorContextItem, SparkItem, CanvasGroup } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -25,9 +29,24 @@ interface Message {
   userQuery?: string;
 }
 
+interface MentionState {
+  active: boolean;
+  query: string;
+  triggerIndex: number; // position of '@' in the input string
+}
+
+interface MentionedRef {
+  id: string;
+  label: string;
+  type: MentionOption['type'];
+}
+
 interface ChatPanelProps {
   sparkId: string;
   itemCount?: number;
+  items?: SparkItem[];
+  groups?: CanvasGroup[];
+  onItemAdded?: () => void;
 }
 
 // ─── Proposal block parser ────────────────────────────
@@ -185,13 +204,19 @@ function ProposalCard({
 
 // ─── Main component ───────────────────────────────────
 
-export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
+export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups = [], onItemAdded }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
+  const { isDragOver, isUploading, dragHandlers } = useFileDrop({ sparkId, onItemAdded });
+
+  // ── @ Mention state ──────────────────────────────
+  const [mentionState, setMentionState] = useState<MentionState>({ active: false, query: '', triggerIndex: -1 });
+  const [mentionedRefs, setMentionedRefs] = useState<MentionedRef[]>([]);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -301,6 +326,8 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
 
     const userMessage = input.trim();
     setInput('');
+    setMentionedRefs([]);
+    setMentionState({ active: false, query: '', triggerIndex: -1 });
 
     // Capture selection context at submit time (it may be cleared after apply)
     const activeSelectedText = selectedText?.text;
@@ -317,6 +344,23 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
         message: userMessage,
         session_id: activeSessionId,
       };
+
+      // Include mentioned item/group IDs for contextual weighting
+      if (mentionedRefs.length > 0) {
+        body.mentioned_item_ids = mentionedRefs
+          .filter(r => r.type !== 'group')
+          .map(r => r.id);
+        // For groups, resolve their itemIds and include those too
+        const groupRefs = mentionedRefs.filter(r => r.type === 'group');
+        if (groupRefs.length > 0) {
+          const groupItemIds = groupRefs.flatMap(ref => {
+            const group = groups.find(g => g.id === ref.id);
+            return group ? group.itemIds : [];
+          });
+          const existing = (body.mentioned_item_ids as string[]) || [];
+          body.mentioned_item_ids = [...new Set([...existing, ...groupItemIds])];
+        }
+      }
 
       // Include editor document context when there's content
       if (docText.trim().length > 20) {
@@ -430,7 +474,80 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
     setMessages([]);
   };
 
+  // ── Mention helpers ─────────────────────────────
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart ?? value.length;
+    setInput(value);
+
+    // Detect @ trigger: look backwards from cursor for an unescaped '@'
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+
+    if (atIndex !== -1) {
+      // '@' must be at start or preceded by a space/newline
+      const charBefore = atIndex > 0 ? textBeforeCursor[atIndex - 1] : ' ';
+      if (charBefore === ' ' || charBefore === '\n' || atIndex === 0) {
+        const query = textBeforeCursor.slice(atIndex + 1);
+        // No spaces after @ means still typing a mention query
+        if (!query.includes(' ') || query.length <= 30) {
+          setMentionState({ active: true, query, triggerIndex: atIndex });
+          return;
+        }
+      }
+    }
+
+    // Close mention if active and no valid trigger found
+    if (mentionState.active) {
+      setMentionState({ active: false, query: '', triggerIndex: -1 });
+    }
+  };
+
+  const handleMentionSelect = useCallback((option: MentionOption) => {
+    // Replace @query with @Label in the input text
+    const before = input.slice(0, mentionState.triggerIndex);
+    const afterCursor = input.slice(mentionState.triggerIndex + 1 + mentionState.query.length);
+    const newInput = `${before}@${option.label}${afterCursor ? afterCursor : ' '}`;
+    setInput(newInput);
+    setMentionState({ active: false, query: '', triggerIndex: -1 });
+
+    // Add to mentioned refs (dedup)
+    setMentionedRefs(prev => {
+      if (prev.some(r => r.id === option.id)) return prev;
+      return [...prev, { id: option.id, label: option.label, type: option.type }];
+    });
+
+    // Re-focus textarea
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [input, mentionState]);
+
+  const handleRemoveMention = useCallback((id: string) => {
+    setMentionedRefs(prev => prev.filter(r => r.id !== id));
+  }, []);
+
+  const openMentionDropdown = useCallback(() => {
+    // Insert '@' at cursor position and open the dropdown
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const cursorPos = textarea.selectionStart ?? input.length;
+    const before = input.slice(0, cursorPos);
+    const after = input.slice(cursorPos);
+    const needsSpace = before.length > 0 && before[before.length - 1] !== ' ';
+    const newInput = `${before}${needsSpace ? ' ' : ''}@${after}`;
+    const atPos = before.length + (needsSpace ? 1 : 0);
+    setInput(newInput);
+    setMentionState({ active: true, query: '', triggerIndex: atPos });
+    setTimeout(() => textarea.focus(), 0);
+  }, [input]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // When mention dropdown is open, let it handle arrow/enter/escape
+    if (mentionState.active) {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
+        // The dropdown's document-level keydown handler will handle these
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -459,7 +576,8 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
   const hasDocContent = docText.trim().length > 20;
 
   return (
-    <div className="flex flex-col h-full relative overflow-hidden">
+    <div className="flex flex-col h-full relative overflow-hidden" {...dragHandlers}>
+      <DropOverlay isDragOver={isDragOver} isUploading={isUploading} />
       {/* Session Sidebar */}
       <ChatSessionSidebar
         sparkId={sparkId}
@@ -707,22 +825,69 @@ export default function ChatPanel({ sparkId, itemCount = 0 }: ChatPanelProps) {
             Ask anything about the selected text — or request a rewrite
           </p>
         )}
+
+        {/* Mentioned items chips */}
+        {mentionedRefs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {mentionedRefs.map(ref => (
+              <span
+                key={ref.id}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-venus-purple-light text-venus-purple text-xs font-medium rounded-full"
+              >
+                @{ref.label}
+                <button
+                  onClick={() => handleRemoveMention(ref.id)}
+                  className="hover:text-venus-purple-deep transition-colors"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              selectedText
-                ? 'e.g. "Make this more concise" or "Rewrite in a formal tone"…'
-                : 'Ask about your Spark or document…'
-            }
-            rows={1}
-            className="flex-1 px-3 py-2.5 border border-venus-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-venus-purple/30 focus:border-venus-purple transition-colors resize-none max-h-32"
-            style={{ minHeight: '42px' }}
+          {/* Plus button — open mention dropdown */}
+          <button
+            type="button"
+            onClick={openMentionDropdown}
             disabled={isStreaming}
-          />
+            title="Reference an item or group"
+            className="p-2.5 text-venus-gray-400 hover:text-venus-purple hover:bg-venus-purple-light rounded-lg transition-colors disabled:opacity-50 shrink-0"
+          >
+            <Plus size={16} />
+          </button>
+
+          <div ref={inputWrapperRef} className="flex-1 relative">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                selectedText
+                  ? 'e.g. "Make this more concise" or "Rewrite in a formal tone"…'
+                  : 'Ask about your Spark… (type @ to mention items)'
+              }
+              rows={1}
+              className="w-full px-3 py-2.5 border border-venus-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-venus-purple/30 focus:border-venus-purple transition-colors resize-none max-h-32"
+              style={{ minHeight: '42px' }}
+              disabled={isStreaming}
+            />
+
+            {/* Mention dropdown */}
+            {mentionState.active && (items.length > 0 || groups.length > 0) && (
+              <ChatMentionDropdown
+                items={items}
+                groups={groups}
+                query={mentionState.query}
+                onSelect={handleMentionSelect}
+                onClose={() => setMentionState({ active: false, query: '', triggerIndex: -1 })}
+                style={{ bottom: '100%', left: 0, marginBottom: '4px' }}
+              />
+            )}
+          </div>
+
           <button
             type="submit"
             disabled={!input.trim() || isStreaming}

@@ -7,6 +7,7 @@ import {
   IMPORT_CALLS,
   type ClarityMetricData,
 } from '@/lib/clarity/api';
+import { removeItemsFromCanvas } from '@/lib/canvas-cleanup';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,12 +43,25 @@ export async function POST(request: NextRequest) {
       let totalImported = 0;
 
       try {
+        // Query IDs of existing clarity items before deleting (for canvas cleanup)
+        const { data: existingItems } = await supabaseAdmin
+          .from('spark_items')
+          .select('id')
+          .eq('spark_id', spark_id)
+          .eq('type', 'clarity_insight');
+
         // Delete existing clarity items for this spark (idempotent re-import)
         await supabaseAdmin
           .from('spark_items')
           .delete()
           .eq('spark_id', spark_id)
           .eq('type', 'clarity_insight');
+
+        // Clean stale references from canvas metadata
+        const deletedIds = existingItems?.map((i) => i.id) || [];
+        if (deletedIds.length > 0) {
+          await removeItemsFromCanvas(spark_id, deletedIds);
+        }
 
         // Make strategic API calls with different dimension combinations
         for (let callIdx = 0; callIdx < IMPORT_CALLS.length; callIdx++) {

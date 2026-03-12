@@ -7,6 +7,7 @@ import {
   buildItemText,
   getImageUrl,
 } from '@/lib/embeddings';
+import { analyzeImage } from '@/lib/image-analysis';
 
 const CS_API_BASE = 'https://api.contentstack.io/v3';
 
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
   });
 
   // ── Create SparkItem ──
-  const metadata = {
+  const metadata: Record<string, unknown> = {
     cs_asset_uid: asset.uid,
     cs_asset_url: asset.url,
     cs_asset_content_type: asset.content_type,
@@ -122,16 +123,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // ── Generate embedding in background ──
+  // ── Analyze image + generate embedding in background ──
   after(async () => {
     try {
+      let finalMetadata = { ...metadata };
+      let itemContent = data.content;
+      let itemSummary: string | null = null;
+
+      // For image assets, run Claude Vision analysis first
+      const imageUrl = getImageUrl({ type: 'contentstack_asset', content: data.content, metadata });
+      if (imageUrl) {
+        const analysis = await analyzeImage(imageUrl);
+        if (analysis) {
+          finalMetadata = {
+            ...finalMetadata,
+            image_analysis: { ...analysis, analyzed_at: new Date().toISOString() },
+          };
+          itemContent = analysis.full_description || data.content;
+          itemSummary = analysis.short_summary || null;
+
+          await supabaseAdmin
+            .from('spark_items')
+            .update({
+              metadata: finalMetadata,
+              content: itemContent,
+              summary: itemSummary,
+            })
+            .eq('id', data.id);
+        }
+      }
+
       const itemData = {
         title: data.title,
-        content: data.content,
+        content: itemContent,
         type: 'contentstack_asset',
-        metadata,
+        metadata: finalMetadata,
       };
-      const imageUrl = getImageUrl(itemData);
 
       const embedding = imageUrl
         ? await generateImageEmbedding(imageUrl, buildItemText(itemData))

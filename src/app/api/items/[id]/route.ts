@@ -6,6 +6,7 @@ import {
   buildItemText,
   getImageUrl,
 } from '@/lib/embeddings';
+import { removeItemsFromCanvas } from '@/lib/canvas-cleanup';
 
 // GET /api/items/[id] - Fetch a single item
 export async function GET(
@@ -88,6 +89,13 @@ export async function DELETE(
 ) {
   const { id } = await params;
 
+  // Look up spark_id before deleting so we can clean up canvas metadata
+  const { data: item } = await supabaseAdmin
+    .from('spark_items')
+    .select('spark_id')
+    .eq('id', id)
+    .single();
+
   const { error } = await supabaseAdmin
     .from('spark_items')
     .delete()
@@ -95,6 +103,13 @@ export async function DELETE(
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Clean stale references from canvas metadata
+  if (item?.spark_id) {
+    removeItemsFromCanvas(item.spark_id, [id]).catch((err) =>
+      console.error('[items] Canvas cleanup failed:', err)
+    );
   }
 
   return NextResponse.json({ success: true });

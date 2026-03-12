@@ -109,9 +109,15 @@ export async function POST(request: NextRequest) {
               ...finalMetadata,
               image_analysis: { ...analysis, analyzed_at: new Date().toISOString() },
             };
+            // Write analysis text into content/summary so it flows through
+            // all existing context formatters (RAG, scoped, @mentioned)
             await supabaseAdmin
               .from('spark_items')
-              .update({ metadata: finalMetadata })
+              .update({
+                metadata: finalMetadata,
+                content: analysis.full_description || content || null,
+                summary: analysis.short_summary || null,
+              })
               .eq('id', data.id);
           }
         }

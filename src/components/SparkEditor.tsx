@@ -37,6 +37,8 @@ import type { MentionListRef, MentionItem } from './editor/MentionList';
 import SlashCommand from './editor/SlashCommand';
 import SlashCommandList, { filterSlashCommands } from './editor/SlashCommandList';
 import type { SlashCommandListRef, SlashCommandItem } from './editor/SlashCommandList';
+import DropOverlay from './DropOverlay';
+import { useFileDrop } from '@/hooks/useFileDrop';
 
 // ─── Collaboration color palette ──────────────────────────
 const COLLAB_COLORS = [
@@ -333,12 +335,15 @@ interface SparkEditorProps {
   onPresenceChange?: (users: CollabUser[], localClientId: number) => void;
   /** Called to update the local user's display name (from parent) */
   collabNameOverride?: string;
+  /** Called after a file is uploaded via drag-and-drop */
+  onItemAdded?: () => void;
 }
 
 export default function SparkEditor({
   sparkId, onAskAI, initialContent, onContentChange,
   onCommentCreate, onCommentMarkClick, activeThreadId,
   canvasGroups, sparkItems, onPresenceChange, collabNameOverride,
+  onItemAdded,
 }: SparkEditorProps) {
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
@@ -346,6 +351,7 @@ export default function SparkEditor({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const ctx = useEditorContext();
+  const { isDragOver, isUploading, dragHandlers } = useFileDrop({ sparkId, onItemAdded });
 
   // Keep a ref so the onUpdate closure always sees the latest callback
   const onContentChangeRef = useRef(onContentChange);
@@ -592,7 +598,8 @@ export default function SparkEditor({
   const e = editor;
 
   return (
-    <div className="flex flex-col h-full bg-surface">
+    <div className="flex flex-col h-full bg-surface relative" {...dragHandlers}>
+      <DropOverlay isDragOver={isDragOver} isUploading={isUploading} />
 
       {/* ── Toolbar ── */}
       <div className="shrink-0 flex items-center flex-wrap gap-0.5 px-3 py-2 border-b border-venus-gray-200 bg-surface">

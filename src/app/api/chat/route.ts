@@ -17,6 +17,7 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 - Be honest about weak ideas. If a campaign concept, content angle, or strategy has problems, say so directly and explain why. Do not soften bad news.
 - Keep it concise. Short paragraphs, no filler, no preamble. Get to the point.
 - Use the semantic_search tool to find relevant items before answering. Reference specific items by name.
+- When image items appear in context, you can see them and should describe or reason about their visual content. Image descriptions, OCR text, and detected objects from image analysis are included in the context when available.
 - Format in Markdown. No emojis.
 
 ## Generating artifacts
@@ -353,6 +354,27 @@ function extractImageUrls(items: Record<string, unknown>[]): Array<{ url: string
 }
 
 /**
+ * Extract image analysis text from item metadata for use in context formatting.
+ * This ensures Claude has access to Vision-generated descriptions of images.
+ */
+function formatImageAnalysis(meta: Record<string, unknown> | null): string[] {
+  if (!meta?.image_analysis) return [];
+  const ia = meta.image_analysis as {
+    full_description?: string;
+    ocr_text?: string;
+    objects?: string[];
+    scene_description?: string;
+    short_summary?: string;
+  };
+  const parts: string[] = [];
+  if (ia.full_description) parts.push(`Image description: ${ia.full_description}`);
+  if (ia.ocr_text) parts.push(`Text in image: ${ia.ocr_text}`);
+  if (ia.objects?.length) parts.push(`Objects: ${ia.objects.join(', ')}`);
+  if (ia.scene_description) parts.push(`Scene: ${ia.scene_description}`);
+  return parts;
+}
+
+/**
  * Retrieve the most relevant items from the Spark using vector similarity.
  * This provides automatic RAG context before Claude even starts thinking.
  * Returns both text (for system prompt) and image URLs (for user message).
@@ -377,8 +399,14 @@ async function retrieveContext(
 
     const itemTexts = data
       .map(
-        (item, i) =>
-          `${i + 1}. [${item.type}] ${item.title}\n${item.content?.substring(0, 500) || ''}\n${item.summary ? `Summary: ${item.summary}` : ''}`
+        (item, i) => {
+          const meta = item.metadata as Record<string, unknown> | null;
+          const parts = [`${i + 1}. [${item.type}] ${item.title}`];
+          if (item.content) parts.push(item.content.substring(0, 500));
+          if (item.summary) parts.push(`Summary: ${item.summary}`);
+          parts.push(...formatImageAnalysis(meta));
+          return parts.join('\n');
+        }
       )
       .join('\n\n');
 
@@ -492,8 +520,14 @@ async function retrieveContext(
 
     const recentTexts = recent
       .map(
-        (item, i) =>
-          `${i + 1}. [${item.type}] ${item.title}\n${item.content?.substring(0, 500) || ''}`
+        (item, i) => {
+          const meta = item.metadata as Record<string, unknown> | null;
+          const parts = [`${i + 1}. [${item.type}] ${item.title}`];
+          if (item.content) parts.push(item.content.substring(0, 500));
+          if (item.summary) parts.push(`Summary: ${item.summary}`);
+          parts.push(...formatImageAnalysis(meta));
+          return parts.join('\n');
+        }
       )
       .join('\n\n');
 
@@ -515,7 +549,12 @@ async function retrieveContext(
   const itemTexts = data
     .map((item: Record<string, unknown>, i: number) => {
       const similarity = ((item.similarity as number) * 100).toFixed(0);
-      return `${i + 1}. [${item.type}] ${item.title} (${similarity}% match)\n${(item.content as string)?.substring(0, 800) || ''}\n${item.summary ? `Summary: ${item.summary}` : ''}`;
+      const meta = item.metadata as Record<string, unknown> | null;
+      const parts = [`${i + 1}. [${item.type}] ${item.title} (${similarity}% match)`];
+      if (item.content) parts.push((item.content as string).substring(0, 800));
+      if (item.summary) parts.push(`Summary: ${item.summary}`);
+      parts.push(...formatImageAnalysis(meta));
+      return parts.join('\n');
     })
     .join('\n\n');
 
@@ -538,6 +577,8 @@ export async function POST(request: NextRequest) {
     editor_content,
     // Canvas scoped items — when present, these items ARE the primary context
     scoped_item_ids,
+    // @ mentioned items — these supplement RAG with extra weight
+    mentioned_item_ids,
   } = await request.json();
 
   if (!spark_id || !message) {
@@ -665,6 +706,7 @@ export async function POST(request: NextRequest) {
                 if (meta.cs_stack_name) parts.push(`Stack: ${meta.cs_stack_name}`);
                 if (meta.cs_entry_url) parts.push(`Entry URL: ${meta.cs_entry_url}`);
                 if (meta.tags && Array.isArray(meta.tags)) parts.push(`Tags: ${(meta.tags as string[]).join(', ')}`);
+                parts.push(...formatImageAnalysis(meta));
               }
               return parts.join('\n');
             })
@@ -698,6 +740,62 @@ export async function POST(request: NextRequest) {
             level: 'info',
             summary: `RAG: matched ${ragContext.items.length} item${ragContext.items.length !== 1 ? 's' : ''}, ${ragContext.images.length} image${ragContext.images.length !== 1 ? 's' : ''}`,
           });
+        }
+
+        // ── @ Mentioned items — supplement RAG with extra weight ──
+        if (Array.isArray(mentioned_item_ids) && mentioned_item_ids.length > 0) {
+          const { data: mentionedItems, error: mentionError } = await supabaseAdmin
+            .from('spark_items')
+            .select('id, type, title, content, summary, metadata')
+            .in('id', mentioned_item_ids);
+
+          if (mentionError) {
+            console.error('[chat] mentioned item fetch error:', mentionError.message);
+          }
+
+          const mItems = mentionedItems || [];
+          if (mItems.length > 0) {
+            // Filter out items already in RAG context to avoid duplication
+            const existingIds = new Set(ragContext.items.map(i => i.id));
+            const newItems = mItems.filter(i => !existingIds.has(i.id));
+
+            if (newItems.length > 0) {
+              const mentionTexts = newItems
+                .map((item, i) => {
+                  const meta = item.metadata as Record<string, unknown> | null;
+                  const parts: string[] = [`${i + 1}. [${item.type}] ${item.title}`];
+                  if (item.content) parts.push((item.content as string).substring(0, 2000));
+                  if (item.summary) parts.push(`Summary: ${item.summary}`);
+                  if (meta?.url) parts.push(`URL: ${meta.url}`);
+                  parts.push(...formatImageAnalysis(meta));
+                  return parts.join('\n');
+                })
+                .join('\n\n');
+
+              ragContext.text += `\n\n## Mentioned Items (explicitly referenced by the user with @)\nThe user specifically mentioned these items in their message. Give them extra attention and be sure to reference them in your response.\n\n${mentionTexts}`;
+
+              // Add mentioned items to the context items list
+              for (const item of newItems) {
+                ragContext.items.push({
+                  id: item.id,
+                  type: item.type as VectorContextItem['type'],
+                  title: item.title,
+                  similarity: 1, // Max relevance for explicitly mentioned items
+                  summary: (item.summary as string) || null,
+                });
+              }
+
+              // Add any images from mentioned items
+              ragContext.images.push(...extractImageUrls(newItems as Record<string, unknown>[]));
+            }
+
+            addLogEntry({
+              service: 'supabase',
+              direction: 'event',
+              level: 'info',
+              summary: `@ Mentions: ${mItems.length} item${mItems.length !== 1 ? 's' : ''} injected into context`,
+            });
+          }
         }
 
         // ── Editor context ──────────────────────────────────────
