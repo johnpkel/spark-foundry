@@ -105,7 +105,7 @@ export function buildCSAuthUrl(state: string): string {
 /** Exchange an authorization code for tokens */
 export async function exchangeCodeForTokens(
   code: string
-): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+): Promise<{ access_token: string; refresh_token: string; expires_in: number; organization_uid?: string; [key: string]: unknown }> {
   const res = await fetch(`${CS_AUTH_BASE}/apps-api/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -123,7 +123,12 @@ export async function exchangeCodeForTokens(
     throw new Error(`CS token exchange failed: ${err}`);
   }
 
-  return res.json();
+  const data = await res.json();
+  console.log('[contentstack/oauth] Token response keys:', Object.keys(data));
+  if (data.organization_uid) {
+    console.log('[contentstack/oauth] Token org_uid:', data.organization_uid);
+  }
+  return data;
 }
 
 /** Refresh an expired access token */
@@ -151,7 +156,8 @@ export async function refreshAccessToken(
 
 /** Fetch user info from Contentstack management API */
 export async function fetchUserInfo(
-  accessToken: string
+  accessToken: string,
+  authorizedOrgUid?: string
 ): Promise<{ email: string; display_name: string; organization_uid?: string }> {
   const res = await fetch(`${CS_API_BASE}/v3/user`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -167,10 +173,18 @@ export async function fetchUserInfo(
   const lastName = user.last_name || '';
   const display_name = `${firstName} ${lastName}`.trim() || user.email;
 
-  // Extract first org UID if available
-  const organization_uid = user.organizations?.length
-    ? user.organizations[0].uid
-    : undefined;
+  // Log all orgs the user belongs to for debugging
+  if (Array.isArray(user.organizations)) {
+    console.log('[contentstack/oauth] User orgs:', user.organizations.map((o: { uid: string; name: string }) => `${o.name}(${o.uid})`));
+  }
+
+  // Prefer the org from the token response (the one the user actually selected),
+  // then fall back to matching from user profile, then first org
+  let organization_uid = authorizedOrgUid;
+  if (!organization_uid && Array.isArray(user.organizations) && user.organizations.length) {
+    organization_uid = user.organizations[0].uid;
+    console.log('[contentstack/oauth] No org from token, falling back to first org:', organization_uid);
+  }
 
   return {
     email: user.email,

@@ -187,13 +187,27 @@ export async function listStacks(
   // Strategy 4: Extract stacks from GET /v3/user profile (last resort)
   try {
     debug.push('S4: GET /v3/user (profile extraction)');
-    const stacks = await listStacksFromUserProfile(token);
+    const { stacks, profileKeys } = await listStacksFromUserProfile(token);
+    debug.push(`S4 profile keys: ${profileKeys}`);
     debug.push(`S4 result: ${stacks.length} stacks`);
-    return { stacks, _debug: debug };
+    if (stacks.length) return { stacks, _debug: debug };
   } catch (err) {
     debug.push(`S4 error: ${(err as Error).message}`);
-    return { stacks: [], _debug: debug };
   }
+
+  // Strategy 5: List stacks via app installations
+  if (orgUid) {
+    try {
+      debug.push(`S5: GET /v3/organizations/${orgUid}/apps (installations)`);
+      const stacks = await listStacksFromInstallations(token, orgUid);
+      debug.push(`S5 result: ${stacks.length} stacks`);
+      if (stacks.length) return { stacks, _debug: debug };
+    } catch (err) {
+      debug.push(`S5 error: ${(err as Error).message}`);
+    }
+  }
+
+  return { stacks: [], _debug: debug };
 }
 
 /**
@@ -269,7 +283,7 @@ async function listStacksFromOrg(token: string, orgUid: string): Promise<CSStack
  * Checks multiple locations where Contentstack may nest stack info:
  * org.stacks[], org.roles[].stack, and top-level user.stacks[].
  */
-async function listStacksFromUserProfile(token: string): Promise<CSStack[]> {
+async function listStacksFromUserProfile(token: string): Promise<{ stacks: CSStack[]; profileKeys: string }> {
   const res = await fetch(`${CS_API_BASE}/user`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -285,6 +299,12 @@ async function listStacksFromUserProfile(token: string): Promise<CSStack[]> {
   const user = data.user;
   const seen = new Set<string>();
   const stacks: CSStack[] = [];
+
+  // Log what keys exist in the user profile for debugging
+  const userKeys = Object.keys(user || {});
+  const orgCount = Array.isArray(user?.organizations) ? user.organizations.length : 0;
+  const orgKeys = orgCount > 0 ? Object.keys(user.organizations[0]) : [];
+  const profileKeys = `user:[${userKeys.join(',')}] orgs:${orgCount} orgKeys:[${orgKeys.join(',')}]`;
 
   function addStack(s: Record<string, unknown>, orgUid: string) {
     const apiKey = s.api_key as string;
@@ -321,6 +341,47 @@ async function listStacksFromUserProfile(token: string): Promise<CSStack[]> {
   if (Array.isArray(user.stacks)) {
     for (const stack of user.stacks) {
       addStack(stack, (stack.org_uid as string) || '');
+    }
+  }
+
+  return { stacks, profileKeys };
+}
+
+/**
+ * List stacks by querying the organization's stacks through the user's org membership.
+ * Uses GET /v3/organizations/{uid} to get org details including enabled features,
+ * then tries to enumerate stacks from the org response.
+ */
+async function listStacksFromInstallations(token: string, orgUid: string): Promise<CSStack[]> {
+  // Try the organization detail endpoint which may include stacks
+  const url = `${CS_API_BASE}/organizations/${orgUid}?include_stacks=true&include_plan=false`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GET /organizations/${orgUid}?include_stacks failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  const org = data.organization;
+  if (!org) throw new Error('No organization in response');
+
+  const stacks: CSStack[] = [];
+  // Check if stacks are directly included
+  if (Array.isArray(org.stacks)) {
+    for (const s of org.stacks) {
+      stacks.push({
+        api_key: s.api_key,
+        name: s.name || s.api_key,
+        uid: s.uid || '',
+        org_uid: orgUid,
+        master_locale: s.master_locale || 'en-us',
+      });
     }
   }
 

@@ -35,9 +35,9 @@ export async function GET(request: NextRequest) {
   try {
     console.log('[contentstack/callback] Exchanging code for tokens...');
     const tokens = await exchangeCodeForTokens(code);
-    console.log('[contentstack/callback] Token exchange succeeded, fetching user info...');
-    const userInfo = await fetchUserInfo(tokens.access_token);
-    console.log('[contentstack/callback] User info fetched:', userInfo.email);
+    console.log('[contentstack/callback] Token exchange succeeded, org from token:', tokens.organization_uid || 'none');
+    const userInfo = await fetchUserInfo(tokens.access_token, tokens.organization_uid);
+    console.log('[contentstack/callback] User info fetched:', userInfo.email, 'org:', userInfo.organization_uid);
 
     await storeSession(
       tokens.access_token,
