@@ -1,0 +1,127 @@
+---
+title: RAG Pipeline
+description: How Spark Foundry's Retrieval-Augmented Generation pipeline works — from embedding to context assembly to Claude.
+---
+
+## RAG Pipeline
+
+Every chat message in Spark Foundry goes through a RAG (Retrieval-Augmented Generation) pipeline that finds relevant context before Claude generates a response. This ensures the AI analyst always has access to the user's collected data.
+
+### Pipeline Overview
+
+```
+User Message
+    │
+    ▼
+┌──────────────┐
+│  Voyage AI   │ ← Embed the query (voyage-multimodal-3, 1024-dim)
+│  Embedding   │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────────────────────────────────┐
+│        Parallel Vector Search            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ │
+│  │  Items   │ │ Sessions │ │ Research │ │
+│  │  (top 8) │ │  (top 5) │ │  (top 3) │ │
+│  └──────────┘ └──────────┘ └──────────┘ │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+          ┌────────────────┐
+          │Context Assembly│ ← Format items, sessions, research into text
+          │ + Image URLs   │ ← Extract image URLs for multimodal context
+          └────────┬───────┘
+                   │
+                   ▼
+          ┌────────────────┐
+          │ Claude Stream  │ ← System prompt + RAG context + conversation
+          │ + Tool Loop    │   history + user message (with images)
+          └────────────────┘
+```
+
+### Step 1: Query Embedding
+
+The user's message is embedded using Voyage AI's `voyage-multimodal-3` model:
+
+```typescript
+// src/lib/embeddings.ts
+const queryEmbedding = await generateQueryEmbedding(userMessage);
+// Returns: number[1024] or null (if embedding fails)
+```
+
+If embedding fails (API error, rate limit), the pipeline falls back to fetching the 5 most recent items from the Spark.
+
+### Step 2: Parallel Vector Search
+
+Three Supabase RPC calls run simultaneously:
+
+```typescript
+const [itemsResult, sessionsResult, researchResult] = await Promise.all([
+  supabaseAdmin.rpc('match_spark_items', {
+    p_spark_id: sparkId,
+    query_embedding: JSON.stringify(queryEmbedding),
+    match_threshold: 0.25,
+    match_count: 8,
+  }),
+  supabaseAdmin.rpc('match_chat_sessions', { ... }),
+  supabaseAdmin.rpc('match_web_research_items', { ... }),
+]);
+```
+
+Each function computes cosine similarity in PostgreSQL using pgvector:
+
+```sql
+-- Simplified version of the match function
+SELECT id, type, title, content, summary, metadata,
+       1 - (embedding <=> query_embedding) as similarity
+FROM spark_items
+WHERE spark_id = p_spark_id
+  AND 1 - (embedding <=> query_embedding) > match_threshold
+ORDER BY similarity DESC
+LIMIT match_count;
+```
+
+### Step 3: Context Assembly
+
+Results are formatted into structured text sections that become part of Claude's system prompt:
+
+- **Items**: `[type] Title (85% match)` with content, summary, and image analysis metadata
+- **Past conversations**: Chat session titles with user messages
+- **Web research**: Titles, queries, summaries, and source URLs
+- **Images**: URLs extracted from items are passed as multimodal content blocks
+
+### Step 4: Special Context Modes
+
+The pipeline has two additional context modes beyond standard RAG:
+
+**Scoped items** (Canvas selection): When the user selects items on the canvas and chats about them, those exact items are fetched directly instead of using vector search. The prompt instructs Claude to reference every selected item.
+
+**@ Mentions**: When the user `@mentions` specific items in their message, those items are fetched and added to the RAG context with maximum similarity (1.0), supplementing the vector search results.
+
+### Step 5: Claude Streaming with Tool Loop
+
+The assembled context, conversation history, and tools are passed to Claude:
+
+```typescript
+const stream = anthropic.messages.stream({
+  model: 'claude-sonnet-4-6',
+  max_tokens: maxTokens,
+  system: systemPrompt + ragContext.text + editorContext,
+  tools: ALL_TOOLS,
+  messages: [...historyMessages, { role: 'user', content: userContent }],
+});
+```
+
+If the message is complex enough (determined by `computeTurnBudget()`), the system enters a multi-turn ReAct loop where Claude can call tools, observe results, and continue reasoning for up to N turns.
+
+### Fallback Behavior
+
+The pipeline is designed to degrade gracefully:
+
+| Failure | Fallback |
+|---------|----------|
+| Embedding API error | Fetch 5 most recent items |
+| Vector search returns empty | Keyword search via `ilike` |
+| No items in Spark at all | Claude responds from its own knowledge |
+| Image fetch fails | Text metadata still included |

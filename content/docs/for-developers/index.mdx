@@ -1,0 +1,86 @@
+---
+title: Developer Guide
+description: Technical overview of Spark Foundry's architecture, patterns, and extension points for developers.
+---
+
+## Developer Overview
+
+Spark Foundry is a Next.js 16 application using the App Router, TypeScript, and Tailwind CSS v4. It follows a server-first architecture where most data operations happen in API routes, and the client uses SSE (Server-Sent Events) for real-time streaming.
+
+### Directory Structure
+
+```
+src/
+  app/                      # Next.js App Router
+    api/                    # ~30 API routes (REST + SSE)
+      chat/                 # Chat with RAG pipeline
+      sparks/[id]/          # Spark CRUD + vector search
+      items/[id]/           # Item management
+      logs/                 # Activity log SSE stream
+      auth/                 # OAuth flows (Contentstack, Google)
+      contentstack/         # CMS import endpoints
+      slack/                # Slack bot integration
+    docs/                   # This documentation (Fumadocs)
+    spark/[id]/             # Workspace page
+    login/                  # OAuth login page
+  components/               # ~35 React components
+    ChatPanel.tsx           # Chat UI + streaming handler
+    SparkEditor.tsx         # TipTap rich text editor
+    canvas/                 # Collaborative canvas (Y.js + React Flow)
+    editor/                 # TipTap extensions (mentions, etc.)
+  lib/                      # Business logic & utilities
+    types.ts                # Core TypeScript interfaces
+    agent/                  # Claude Agent SDK tools + loop
+    supabase/               # Database clients (admin, server, client)
+    contentstack/           # CMS API wrapper + OAuth
+    google/                 # Google Drive API + OAuth
+    slack.ts                # Slack API utilities
+    clarity/                # Microsoft Clarity API
+    embeddings.ts           # Voyage AI embedding calls
+    activity-logger.ts      # Server-side SSE event system
+  hooks/                    # Custom React hooks
+```
+
+### Key Architectural Decisions
+
+1. **Server-side SSE over WebSockets** — All real-time features (chat streaming, activity log, import progress) use SSE rather than WebSockets. This is simpler to deploy, works through CDNs and reverse proxies, and avoids the complexity of maintaining WebSocket connections.
+
+2. **RAG-first chat** — Every chat message triggers a vector similarity search before Claude sees the question. This means the AI always has relevant context from the user's collected items, even without explicit tool calls.
+
+3. **Agent SDK for tools** — The chat system uses Anthropic's Claude Agent SDK to define MCP-compatible tools. This gives Claude access to semantic search, item listing, web research, and CMS operations.
+
+4. **Venus Design System** — The UI uses CSS custom properties (not Tailwind classes) for theming, with a light/dark mode toggle. This enables the theme to work without JavaScript hydration (via an inline script in the root layout).
+
+5. **Collaborative editing with Y.js** — The document editor supports real-time collaboration through TipTap's collaboration extension backed by Y.js CRDTs and a HocusPocus provider.
+
+### Getting Started
+
+```bash
+# Install dependencies
+npm install
+
+# Start the dev server
+npm run dev
+
+# Build for production
+npm run build && npm start
+```
+
+### Environment Variables
+
+The following environment variables are required:
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Claude API for chat and analysis |
+| `VOYAGE_API_KEY` | Voyage AI for embeddings |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase admin key (server only) |
+| `CONTENTSTACK_CLIENT_ID` | Contentstack OAuth app ID |
+| `CONTENTSTACK_CLIENT_SECRET` | Contentstack OAuth app secret |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token |
+| `SLACK_SIGNING_SECRET` | Slack request verification |
+| `CLARITY_API_TOKEN` | Microsoft Clarity API token |

@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
 
 /* ═══════════════════════════════════════════════
    Venus Design System — Light Theme (default)
@@ -127,6 +129,126 @@
 }
 
 /* ═══════════════════════════════════════════════
+   Fumadocs — Venus Theme Override
+   Maps Fumadocs fd-* tokens to Venus Design System
+   ═══════════════════════════════════════════════ */
+:root {
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--venus-gray-700);
+  --color-fd-muted: var(--venus-gray-100);
+  --color-fd-muted-foreground: var(--venus-gray-500);
+  --color-fd-popover: var(--card-bg);
+  --color-fd-popover-foreground: var(--venus-gray-700);
+  --color-fd-card: var(--venus-gray-50);
+  --color-fd-card-foreground: var(--venus-gray-700);
+  --color-fd-border: var(--venus-gray-200);
+  --color-fd-primary: var(--venus-purple);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: var(--venus-gray-100);
+  --color-fd-secondary-foreground: var(--venus-gray-700);
+  --color-fd-accent: var(--venus-purple-light);
+  --color-fd-accent-foreground: var(--venus-gray-700);
+  --color-fd-ring: var(--venus-purple-medium);
+  --color-fd-overlay: rgba(0, 0, 0, 0.15);
+}
+.dark {
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--venus-gray-700);
+  --color-fd-muted: var(--venus-gray-100);
+  --color-fd-muted-foreground: var(--venus-gray-500);
+  --color-fd-popover: var(--venus-gray-100);
+  --color-fd-popover-foreground: var(--venus-gray-700);
+  --color-fd-card: var(--venus-gray-50);
+  --color-fd-card-foreground: var(--venus-gray-700);
+  --color-fd-border: var(--venus-gray-300);
+  --color-fd-primary: var(--venus-purple);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: var(--venus-gray-200);
+  --color-fd-secondary-foreground: var(--venus-gray-700);
+  --color-fd-accent: var(--venus-purple-light);
+  --color-fd-accent-foreground: var(--venus-gray-700);
+  --color-fd-ring: var(--venus-purple-medium);
+  --color-fd-overlay: rgba(0, 0, 0, 0.4);
+}
+
+/* Fumadocs layout — match Venus dimensions */
+:root {
+  --fd-layout-width: 1400px;
+}
+
+/* Sidebar background — match Venus surface */
+#nd-docs-layout [data-sidebar] {
+  background: var(--surface);
+}
+
+/* Sidebar search input — Venus styling */
+#nd-docs-layout [data-search-toggle] {
+  border-color: var(--venus-gray-200);
+  background: var(--background);
+}
+
+/* Code blocks in docs — Venus styling */
+#nd-docs-layout pre {
+  background: var(--venus-gray-50);
+  border: 1px solid var(--venus-gray-200);
+}
+.dark #nd-docs-layout pre {
+  background: var(--venus-gray-50);
+  border-color: var(--venus-gray-300);
+}
+
+/* Inline code in docs — Venus purple tint */
+#nd-docs-layout :not(pre) > code {
+  background: var(--venus-purple-light);
+  color: var(--venus-purple);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+/* Links in docs body — Venus purple */
+#nd-docs-layout [data-docs-body] a:not([data-card]) {
+  color: var(--venus-purple);
+  text-decoration-color: color-mix(in srgb, var(--venus-purple) 40%, transparent);
+}
+#nd-docs-layout [data-docs-body] a:not([data-card]):hover {
+  text-decoration-color: var(--venus-purple);
+}
+
+/* Table styling — match Venus tables */
+#nd-docs-layout table {
+  font-size: 0.875rem;
+}
+#nd-docs-layout th {
+  background: var(--venus-gray-50);
+  font-weight: 600;
+  color: var(--venus-gray-700);
+}
+#nd-docs-layout td,
+#nd-docs-layout th {
+  border-color: var(--venus-gray-200);
+}
+.dark #nd-docs-layout td,
+.dark #nd-docs-layout th {
+  border-color: var(--venus-gray-300);
+}
+
+/* Scrollbar inside docs — match app */
+#nd-docs-layout ::-webkit-scrollbar {
+  width: 6px;
+}
+#nd-docs-layout ::-webkit-scrollbar-track {
+  background: transparent;
+}
+#nd-docs-layout ::-webkit-scrollbar-thumb {
+  background: var(--venus-gray-300);
+  border-radius: 3px;
+}
+#nd-docs-layout ::-webkit-scrollbar-thumb:hover {
+  background: var(--venus-gray-400);
+}
+
+/* ═══════════════════════════════════════════════
    Base Styles
    ═══════════════════════════════════════════════ */
 body {
@@ -188,6 +310,173 @@ body {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+/* ═══════════════════════════════════════════════
+   PRD Page — Markdown Rendering
+   Uses article.prd-content for specificity over Tailwind preflight
+   ═══════════════════════════════════════════════ */
+article.prd-content {
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--foreground);
+}
+
+article.prd-content h1 {
+  display: block;
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 2.5rem 0 1rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 2px solid var(--venus-gray-200);
+  color: var(--foreground);
+  letter-spacing: -0.01em;
+}
+article.prd-content > h1:first-child { margin-top: 0; }
+
+article.prd-content h2 {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 2.5rem 0 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--venus-gray-200);
+  color: var(--foreground);
+}
+
+article.prd-content h3 {
+  display: block;
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.75rem 0 0.5rem;
+  color: var(--foreground);
+}
+
+article.prd-content h4 {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.25rem 0 0.4rem;
+  color: var(--foreground);
+}
+
+article.prd-content p {
+  margin: 0 0 1em;
+}
+
+article.prd-content ul,
+article.prd-content ol {
+  margin: 0 0 1em 1.75em;
+  padding: 0;
+}
+article.prd-content ul { list-style-type: disc; }
+article.prd-content ol { list-style-type: decimal; }
+article.prd-content li {
+  margin-bottom: 0.35em;
+  padding-left: 0.25em;
+}
+article.prd-content li > ul,
+article.prd-content li > ol {
+  margin-top: 0.35em;
+  margin-bottom: 0;
+}
+
+article.prd-content strong { font-weight: 600; }
+article.prd-content em { font-style: italic; }
+
+article.prd-content blockquote {
+  border-left: 3px solid var(--venus-purple);
+  margin: 0 0 1em 0;
+  padding: 0.5em 0 0.5em 1.25em;
+  color: var(--venus-gray-600);
+}
+
+article.prd-content hr {
+  border: none;
+  border-top: 1px solid var(--venus-gray-200);
+  margin: 2.5em 0;
+}
+
+article.prd-content code {
+  background: var(--venus-purple-light);
+  color: var(--venus-purple);
+  font-family: var(--font-geist-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+
+article.prd-content pre {
+  background: var(--venus-gray-100);
+  border: 1px solid var(--venus-gray-200);
+  border-radius: 8px;
+  padding: 1.25em 1.5em;
+  margin: 0 0 1.25em;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+article.prd-content pre code {
+  background: none;
+  color: var(--foreground);
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Tables */
+article.prd-content table {
+  display: table;
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 1.25em;
+  font-size: 0.875rem;
+}
+article.prd-content thead { display: table-header-group; }
+article.prd-content tbody { display: table-row-group; }
+article.prd-content tr { display: table-row; }
+article.prd-content th,
+article.prd-content td {
+  display: table-cell;
+  border: 1px solid var(--venus-gray-200);
+  padding: 0.6em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+article.prd-content th {
+  background: var(--venus-gray-50);
+  font-weight: 600;
+  color: var(--venus-gray-700);
+}
+.dark article.prd-content th {
+  background: var(--venus-gray-100);
+}
+.dark article.prd-content td,
+.dark article.prd-content th {
+  border-color: var(--venus-gray-300);
+}
+
+/* Links */
+article.prd-content a {
+  color: var(--venus-purple);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--venus-purple) 40%, transparent);
+}
+article.prd-content a:hover {
+  text-decoration-color: var(--venus-purple);
+}
+
+/* Images */
+article.prd-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--venus-gray-200);
+  margin: 0.5em 0;
 }
 
 /* ═══════════════════════════════════════════════

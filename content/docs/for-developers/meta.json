@@ -1,0 +1,13 @@
+{
+  "title": "For Developers",
+  "pages": [
+    "index",
+    "architecture",
+    "data-model",
+    "rag-pipeline",
+    "chat-agent",
+    "integrations",
+    "sse-streaming",
+    "theming"
+  ]
+}

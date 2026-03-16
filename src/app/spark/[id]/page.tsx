@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText,
   StickyNote, File, HardDrive, Box, Globe, Database, Paperclip, BarChart2,
-  MessageSquare, MessageSquareText, Target, PanelRightClose, PanelRightOpen,
+  MessageSquare, MessageSquareText, Target, PanelRightClose, PanelRightOpen, BookOpen,
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
@@ -428,6 +428,20 @@ function SparkWorkspacePage() {
             <Wand2 size={13} />
             Generate
           </button>
+          <a
+            href="/prd"
+            className="flex items-center gap-1 px-2 py-1.5 text-xs text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100 rounded-md transition-colors"
+            title="Product Requirements Document"
+          >
+            <FileText size={14} />
+          </a>
+          <a
+            href="/docs"
+            className="flex items-center gap-1 px-2 py-1.5 text-xs text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100 rounded-md transition-colors"
+            title="Documentation"
+          >
+            <BookOpen size={14} />
+          </a>
           <ActivityLogButton />
           <ThemeToggle />
         </div>

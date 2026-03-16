@@ -56,6 +56,8 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   // Skill tools
   use_skill: 'read',
   get_skill_resource: 'read',
+  // Editor tools
+  update_editor: 'write',
 };
 
 export function getToolRisk(name: string): ToolRisk {
@@ -94,6 +96,7 @@ export const TOOL_LABELS: Record<string, string> = {
   lytics_get_opportunities: 'Loading opportunities...',
   use_skill: 'Loading skill instructions...',
   get_skill_resource: 'Loading skill resource...',
+  update_editor: 'Updating document...',
 };
 
 // ─── Tool definitions ──────────────────────────
@@ -425,6 +428,27 @@ const SKILL_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
+const EDITOR_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'update_editor',
+    description: "Apply content to the user's Spark Editor document. Use this when the user asks you to modify, add to, or rewrite their document.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['append', 'integrate', 'insert_after'],
+          description: 'How to apply the content: append (add to end), integrate (full document rewrite), insert_after (insert after a heading)',
+        },
+        content: { type: 'string', description: 'The markdown content to apply' },
+        target_heading: { type: 'string', description: 'For insert_after mode: the heading text to insert after' },
+        description: { type: 'string', description: 'Short human-readable summary of the change' },
+      },
+      required: ['mode', 'content', 'description'],
+    },
+  },
+];
+
 // ─── Combined tool list ─────────────────────────
 
 export const TOOLS: Anthropic.Tool[] = [
@@ -432,6 +456,7 @@ export const TOOLS: Anthropic.Tool[] = [
   ...CS_TOOLS,
   ...LYTICS_TOOLS,
   ...SKILL_TOOLS,
+  ...EDITOR_TOOLS,
 ];
 
 export const WEB_SEARCH_TOOL: Anthropic.WebSearchTool20250305 = {
@@ -524,6 +549,8 @@ export function summarizeToolInput(name: string, input: Record<string, unknown>)
       return `skill: ${input.skill_id}`;
     case 'get_skill_resource':
       return `resource: ${input.resource_name}`;
+    case 'update_editor':
+      return `${input.mode}: ${input.description || 'Update document'}`;
     default:
       return Object.keys(input).join(', ');
   }
@@ -539,6 +566,10 @@ export function describeWriteOperation(name: string, input: Record<string, unkno
       return `Delete entry ${input.entry_uid} from ${input.content_type_uid}. This cannot be undone.`;
     case 'cs_publish_entry':
       return `Publish entry ${input.entry_uid} to ${(input.environments as string[])?.join(', ')}`;
+    case 'update_editor': {
+      const modeLabels: Record<string, string> = { append: 'Append to document', integrate: 'Rewrite document', insert_after: 'Insert after heading' };
+      return `${modeLabels[input.mode as string] || 'Update document'}: ${input.description || ''}`;
+    }
     default:
       return `Execute ${name}`;
   }

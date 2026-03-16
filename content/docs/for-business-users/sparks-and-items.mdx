@@ -1,0 +1,105 @@
+---
+title: Sparks & Items
+description: Understanding workspaces, content types, and how information flows through Spark Foundry.
+---
+
+## Sparks & Items
+
+### What Is a Spark?
+
+A Spark is your workspace — a self-contained project space where you collect, organize, and transform information. Each Spark has:
+
+- **Items** — The raw materials (links, images, notes, documents, etc.)
+- **Chat sessions** — Conversations with the AI about your items
+- **Artifacts** — Generated business output (CMS entries, campaign briefs)
+- **A document** — A collaborative rich-text editor for drafting
+- **A canvas** — A visual board for spatial organization
+
+Think of a Spark like a research folder that can think. It remembers everything you put into it and can answer questions about the connections between items.
+
+### Item Types
+
+Every piece of content in a Spark is an **item** with a type. The type determines how the item is displayed, what metadata it carries, and how it's processed.
+
+#### Web Links
+
+When you paste a URL, Spark Foundry scrapes the page to extract:
+- Title and meta description
+- Open Graph image
+- Full text content
+- Favicon
+
+The full text is embedded for semantic search, so the AI can find relevant information even from long articles.
+
+#### Images
+
+Uploaded images go through AI vision analysis that extracts:
+- **OCR text** — Any text visible in the image
+- **Object detection** — What's in the image (logos, people, charts, etc.)
+- **Scene description** — What the image depicts overall
+- **Short summary** — A one-line description for quick reference
+
+This means you can ask the AI "what did that whiteboard say?" or "find images with charts" and it will understand.
+
+#### Contentstack Entries & Assets
+
+When connected to Contentstack, you can import:
+- **Entries** — Full content including all fields, content type information, and URLs
+- **Assets** — Files and images from the media library
+
+These retain their CMS metadata (stack name, content type, locale) so the AI understands the CMS context.
+
+#### Slack Threads
+
+Saved Slack threads include:
+- All messages in the thread (concatenated)
+- Channel name and sender information
+- Message count and permalink
+
+This is powerful for capturing team discussions that inform content decisions.
+
+#### Google Drive Documents
+
+Connected Drive documents are exported to text:
+- Google Docs are converted to full text
+- Sheets export as text tables
+- Presentations export slide content
+- Other files are downloaded and processed where possible
+
+#### Notes & Text
+
+Free-form content you create directly in Spark:
+- **Notes** support Markdown formatting
+- **Text** is raw content (useful for pasting from other sources)
+
+#### Clarity Insights
+
+Microsoft Clarity analytics data including:
+- Scroll depth and engagement metrics
+- Click heatmap data
+- Behavioral dimensions over configurable date ranges
+
+### How Items Get Smarter
+
+Every item goes through an embedding pipeline:
+
+1. **Content extraction** — Text, metadata, and AI-generated descriptions are combined
+2. **Vector embedding** — The combined text is converted to a 1024-dimensional vector using Voyage AI
+3. **Indexing** — The vector is stored alongside the item for instant semantic search
+
+This means the AI doesn't just match keywords — it understands meaning. Searching for "revenue growth" will find items about "increasing sales" or "financial performance" even if those exact words aren't used.
+
+### The Items Panel
+
+The left sidebar in the Spark workspace shows all items with:
+- Type filter chips (filter by link, image, note, etc.)
+- Visual cards with thumbnails and summaries
+- Quick actions (edit, delete)
+
+### The Visual Canvas
+
+Switch to the canvas view to see items as draggable cards on a spatial board. You can:
+- **Group items** by dragging them into groups
+- **Name groups** to organize by theme
+- **Chat with groups** — select a group and open the chat for focused analysis
+- **See vector relationships** — the 3D visualization shows how semantically close items are to each other

@@ -306,6 +306,24 @@ function ApprovalCard({
             </pre>
           </details>
         )}
+        {tool === 'update_editor' && typeof preview?.content === 'string' && (
+          <>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <FileCheck2 size={11} className="text-amber-600" />
+              <span className="text-[10px] font-semibold text-amber-700">
+                {preview.mode === 'append' ? 'Append to document' : preview.mode === 'integrate' ? 'Rewrite document' : `Insert after "${String(preview.target_heading)}"`}
+              </span>
+            </div>
+            <details className="mb-2">
+              <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-700">
+                Preview content
+              </summary>
+              <pre className="mt-1 text-[10px] text-amber-700 bg-amber-100/50 rounded p-2 overflow-x-auto max-h-40 whitespace-pre-wrap">
+                {preview.content.substring(0, 500)}{preview.content.length > 500 ? '...' : ''}
+              </pre>
+            </details>
+          </>
+        )}
       </div>
       <div className="flex items-center gap-2 px-3 py-2 border-t border-amber-200 bg-amber-50">
         {isPending ? (
@@ -377,6 +395,8 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
 
   // ── Editor context ──────────────────────────────────
   const editorCtx = useEditorContext();
+  const editorCtxRef = useRef(editorCtx);
+  editorCtxRef.current = editorCtx;
   const selectedText = editorCtx?.selectedText ?? null;
   const setSelectedText = editorCtx?.setSelectedText;
   const applyProposal = editorCtx?.applyProposal;
@@ -631,6 +651,21 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                     }
                     return updated;
                   });
+                } else if (data.type === 'editor_update') {
+                  const ctx = editorCtxRef.current;
+                  if (ctx) {
+                    switch (data.mode) {
+                      case 'append':
+                        ctx.appendContent(data.content);
+                        break;
+                      case 'integrate':
+                        ctx.replaceDocument(data.content);
+                        break;
+                      case 'insert_after':
+                        ctx.insertAfterHeading(data.content, data.target_heading || '');
+                        break;
+                    }
+                  }
                 } else if (data.type === 'budget') {
                   setMessages(prev => {
                     const updated = [...prev];

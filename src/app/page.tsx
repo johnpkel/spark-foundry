@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Sparkles, Search } from 'lucide-react';
+import { Plus, Sparkles, Search, BookOpen, FileText } from 'lucide-react';
 import SparkCard from '@/components/SparkCard';
 import CreateSparkModal from '@/components/CreateSparkModal';
 import { ThemeToggle } from '@/components/ThemeProvider';
@@ -60,6 +60,20 @@ export default function Dashboard() {
           <h1 className="text-lg font-semibold text-venus-gray-700">Spark Foundry</h1>
         </div>
         <div className="ml-auto flex items-center gap-3">
+          <a
+            href="/prd"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100 rounded-lg transition-colors"
+          >
+            <FileText size={16} />
+            PRD
+          </a>
+          <a
+            href="/docs"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-venus-gray-500 hover:text-venus-gray-700 hover:bg-venus-gray-100 rounded-lg transition-colors"
+          >
+            <BookOpen size={16} />
+            Docs
+          </a>
           <ActivityLogButton />
           <ThemeToggle />
         </div>

@@ -549,6 +549,20 @@ export async function POST(request: NextRequest) {
           editorContextSection += `\n\n## Selected Text\nThe user has highlighted the following text in the document and is asking about it specifically:\n\n> ${selected_text}\n\nWhen you suggest an improvement, rewrite, or replacement for this text, format your replacement inside a fenced code block with the language identifier \`proposal\` — like this:\n\n\`\`\`proposal\nYour replacement text here\n\`\`\`\n\nProvide exactly one \`proposal\` block per response when suggesting edits. Explain your changes in plain text outside the block. Use the RAG pipeline (semantic_search tool) to support your suggestions with context from the Spark's knowledge base where relevant.`;
         }
 
+        // Editor tool instructions — only when editor content exists and no text is selected
+        if (editor_content && typeof editor_content === 'string' && editor_content.trim().length > 10
+            && !(selected_text && typeof selected_text === 'string' && selected_text.trim().length > 0)) {
+          editorContextSection += `\n\n## Editor Tool
+When the user asks you to modify their document, use the \`update_editor\` tool.
+
+Mode selection:
+- **append**: "add a section", "add to the bottom", "write a conclusion". Preserves existing content.
+- **integrate**: "integrate this into the document", "rewrite to include", "merge into". You MUST produce the COMPLETE final document. Read existing content carefully and produce an elevated, cohesive result.
+- **insert_after**: "add after the introduction", "insert after [heading]". Set target_heading to the heading text.
+
+Content format: Well-formatted Markdown. Do NOT use this tool when the user just asks a question about the document or when they have selected text (use \`\`\`proposal\`\`\` blocks for selected text edits).`;
+        }
+
         // ── Skills metadata (progressive disclosure: Level 1) ───
         let skillsPromptSection = '';
         const { data: activeSkills } = await supabaseAdmin
@@ -732,6 +746,24 @@ export async function POST(request: NextRequest) {
                 });
                 continue;
               }
+            }
+
+            // ── Client-side editor tool: send SSE event instead of executing ──
+            if (toolName === 'update_editor') {
+              send({
+                type: 'editor_update',
+                mode: toolInput.mode,
+                content: toolInput.content,
+                target_heading: toolInput.target_heading || null,
+                description: toolInput.description || 'Update document',
+              });
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: JSON.stringify({ success: true, message: `Document updated (${toolInput.mode})` }),
+              });
+              send({ type: 'observation', tool: toolName, summary: `Applied to editor (${toolInput.mode})`, success: true, turn });
+              continue;
             }
 
             try {

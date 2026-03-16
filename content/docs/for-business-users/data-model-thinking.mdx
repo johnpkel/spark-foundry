@@ -1,0 +1,80 @@
+---
+title: Thinking About Your Data
+description: How to structure your research in Spark Foundry for maximum AI effectiveness — mental models for the data layer.
+---
+
+## Thinking About Your Data
+
+Spark Foundry's power comes from its data model. Understanding how the system thinks about your information will help you use it more effectively.
+
+### The Spark as a Knowledge Graph
+
+Every item you add to a Spark gets embedded as a point in a high-dimensional vector space. Items that are semantically similar end up close together, even if they use different words.
+
+This means:
+- An article about "customer acquisition costs" will be close to a note about "marketing spend efficiency"
+- A Slack thread discussing "launch timeline" will relate to a Google Doc about "Q2 milestones"
+- An image of a competitor's pricing page will connect to your text notes about pricing strategy
+
+**Mental model:** Think of your Spark as a gravity field where related ideas cluster together naturally. The AI navigates this field to find connections.
+
+### Quality In, Quality Out
+
+The AI's analysis is only as good as the data you feed it. Here are strategies for building a high-quality Spark:
+
+#### Breadth vs. Depth
+
+- **Broad collection** works well for exploration: "What themes emerge from all this research?"
+- **Deep collection** works well for synthesis: "Create a detailed campaign brief from this focused research"
+- Mix both: start broad, then create focused groups on the canvas
+
+#### Summaries Matter
+
+When you add items, their summaries are what the AI sees first when searching. If you notice an item's auto-generated summary misses the point, edit it. A good summary is the single most impactful thing for AI retrieval quality.
+
+#### Diversify Your Sources
+
+The AI performs best when it can cross-reference multiple source types:
+
+| Source Type | What It Adds |
+|------------|-------------|
+| Links/articles | Industry context, external perspectives |
+| Internal docs (Drive) | Institutional knowledge, strategy context |
+| Slack threads | Team sentiment, decision history |
+| CMS entries | Current content state, editorial patterns |
+| Images | Visual data, screenshots, competitive UI |
+| Clarity data | Quantitative user behavior evidence |
+| Notes | Your own analysis, hypotheses, observations |
+
+#### The "So What?" Test
+
+Before adding an item, ask: "Will this help the AI give me a better answer about [my topic]?" If the answer is no, it might add noise rather than signal.
+
+### Organizing with Groups
+
+The canvas groups feature lets you create sub-collections within a Spark:
+
+- **By theme** — "Competitor Pricing," "Customer Testimonials," "Industry Trends"
+- **By stage** — "Raw Research," "Analyzed," "Ready for Content"
+- **By output** — "For Blog Posts," "For Campaign Brief," "For Exec Presentation"
+
+Groups have their own chat sessions, so you can have focused conversations about specific subsets. Groups are also embedded, making them discoverable through search.
+
+### Cross-Spark Thinking
+
+Each Spark is independent, but you can create connections by:
+
+- Using the same links/sources across Sparks (the AI will discover them independently)
+- Referencing findings from one Spark in notes added to another
+- Using web research saved in one Spark as a reference (saved research persists per Spark)
+
+### The Compound Effect
+
+Spark Foundry gets smarter the more you use it:
+
+1. **More items** = richer semantic search results
+2. **More conversations** = past sessions become searchable context
+3. **More web research** = saved findings become reusable knowledge
+4. **More artifacts** = the AI can reference previous output
+
+This compounding is the key advantage over traditional research workflows. In a document or folder, adding more content makes it harder to find things. In Spark Foundry, adding more content makes the AI more helpful.

@@ -1,0 +1,38 @@
+---
+title: Spark Foundry Documentation
+description: The complete guide to building with and using Spark Foundry — an AI-powered workspace for collecting, organizing, and transforming information into business artifacts.
+---
+
+## Welcome to Spark Foundry
+
+Spark Foundry is an AI-powered workspace built on the Contentstack DXP ecosystem. It helps teams collect information from many sources — links, images, documents, Slack threads, Google Drive files, CMS entries — and use AI to synthesize that information into business-ready artifacts like CMS entries and campaign briefs.
+
+### Choose Your Path
+
+<Cards>
+  <Card title="For Developers" href="/docs/for-developers" description="Architecture deep-dive, data model, RAG pipeline, agent system, and integration patterns." />
+  <Card title="For Business Users" href="/docs/for-business-users" description="How to use Spark Foundry, creative use cases, data model thinking, and market comparison." />
+</Cards>
+
+### Key Capabilities
+
+- **Multi-source collection** — Save links, images, notes, files, Slack threads, Google Drive documents, Contentstack entries, and Microsoft Clarity analytics data into a single workspace
+- **AI-powered chat** — Ask questions about your collected data using semantic search (RAG) with Claude as the analyst
+- **Artifact generation** — Transform raw research into CMS entries, campaign briefs, and custom outputs
+- **Collaborative editing** — Real-time document editing with TipTap and Y.js collaboration
+- **Visual canvas** — Drag-and-drop spatial canvas for grouping and organizing items
+- **Vector visualization** — See relationships between your data as a 2D/3D vector space
+
+### Tech Stack at a Glance
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS v4 + Venus Design System |
+| Database | Supabase (PostgreSQL + pgvector) |
+| AI Chat | Anthropic Claude (claude-sonnet-4-6) |
+| Embeddings | Voyage AI (voyage-multimodal-3) |
+| Editor | TipTap + Y.js |
+| CMS | Contentstack |
+| Auth | Contentstack OAuth, Google OAuth |

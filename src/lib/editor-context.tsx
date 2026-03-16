@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useRef, useState, useCallback } from 'react';
 import type { Editor } from '@tiptap/core';
+import { markdownToHtml } from '@/lib/markdown-to-html';
 
 export interface EditorSelection {
   text: string;
@@ -24,6 +25,12 @@ interface EditorContextValue {
    * If there is no stored selection, inserts at the current cursor position.
    */
   applyProposal: (replacement: string) => void;
+  /** Append markdown content to the end of the document (separated by HR) */
+  appendContent: (markdown: string) => void;
+  /** Replace the entire document with markdown content */
+  replaceDocument: (markdown: string) => void;
+  /** Insert markdown content after a specific heading. Falls back to append. */
+  insertAfterHeading: (markdown: string, headingText: string) => void;
 }
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -64,9 +71,56 @@ export function EditorContextProvider({ children }: { children: React.ReactNode 
     [selectedText],
   );
 
+  const appendContent = useCallback((markdown: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = markdownToHtml(markdown);
+    editor
+      .chain()
+      .focus('end')
+      .insertContent('<hr>')
+      .insertContent(html)
+      .run();
+  }, []);
+
+  const replaceDocument = useCallback((markdown: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = markdownToHtml(markdown);
+    editor.commands.setContent(html);
+  }, []);
+
+  const insertAfterHeading = useCallback((markdown: string, headingText: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = markdownToHtml(markdown);
+    const target = headingText.trim().toLowerCase();
+
+    // Walk the document to find the heading node
+    let insertPos: number | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (insertPos !== null) return false; // already found
+      if (node.type.name === 'heading' && node.textContent.trim().toLowerCase() === target) {
+        // Insert after this heading node
+        insertPos = pos + node.nodeSize;
+        return false;
+      }
+    });
+
+    if (insertPos !== null) {
+      editor.chain().focus(insertPos).insertContentAt(insertPos, html).run();
+    } else {
+      // Fallback: append to end
+      appendContent(markdown);
+    }
+  }, [appendContent]);
+
   return (
     <EditorContext.Provider
-      value={{ setEditor, getEditor, getDocumentText, selectedText, setSelectedText, applyProposal }}
+      value={{
+        setEditor, getEditor, getDocumentText, selectedText, setSelectedText,
+        applyProposal, appendContent, replaceDocument, insertAfterHeading,
+      }}
     >
       {children}
     </EditorContext.Provider>

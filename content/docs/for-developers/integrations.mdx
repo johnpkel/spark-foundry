@@ -1,0 +1,105 @@
+---
+title: External Integrations
+description: How Spark Foundry integrates with Contentstack, Google Drive, Slack, Microsoft Clarity, and web search.
+---
+
+## External Integrations
+
+Spark Foundry connects to multiple external services to pull data into Spark workspaces. The integration registry in `src/lib/integrations.ts` is the single source of truth for all integrations.
+
+### Integration Registry
+
+```typescript
+// src/lib/integrations.ts
+export const INTEGRATIONS: IntegrationConfig[] = [
+  { key: 'contentstack', label: 'Contentstack', checkType: 'server', ... },
+  { key: 'google_drive', label: 'Google Drive', checkType: 'server', ... },
+  { key: 'slack', label: 'Slack', checkType: 'server' },
+  { key: 'web_search', label: 'Web Search', checkType: 'static' },
+];
+```
+
+Each integration can be server-checked (has OAuth tokens) or static (always available). The `IntegrationsStatus` component renders connection status and OAuth connect buttons.
+
+### Contentstack
+
+The deepest integration — Spark Foundry was built for the Contentstack ecosystem.
+
+**OAuth Flow** (`src/lib/contentstack/oauth.ts`):
+- Authorization URL generation with PKCE
+- Token exchange via Contentstack's OAuth2 endpoint
+- Token refresh handling
+- Cookies store access/refresh tokens + stack API key
+
+**Management API** (`src/lib/contentstack/management.ts`):
+- Import entries and assets from any stack
+- Browse content types, entries by content type
+- Create/update entries (used by the AI agent for CMS artifact generation)
+- Asset import with metadata extraction
+
+**API Wrapper** (`src/lib/contentstack/api.ts`):
+- All Contentstack API calls are instrumented with the activity logger
+- Handles pagination, rate limiting, and error normalization
+
+### Google Drive
+
+**OAuth Flow** (`src/lib/google/oauth.ts`):
+- Standard OAuth2 with offline access for refresh tokens
+- Scopes: `drive.readonly` for file listing and content export
+
+**Drive API** (`src/lib/google/drive.ts`):
+- Search files by name/content
+- Export Google Docs/Sheets/Slides to text
+- Download binary files
+- Thumbnail URLs for file previews
+
+Items imported from Drive get:
+- `drive_file_id`, `drive_mime_type`, `drive_web_view_link` in metadata
+- Full text content extracted and embedded for semantic search
+- Thumbnail URL for visual display
+
+### Slack
+
+**Bot Integration** (`src/lib/slack.ts`):
+- Bot token authentication (no user OAuth — bot is pre-configured)
+- Thread message fetching for saving conversations
+- Event handling via `/api/slack/events` (message events, app mentions)
+- Interactive components via `/api/slack/interactions`
+
+When a Slack thread is saved:
+- All messages are fetched and concatenated into the item's `content`
+- Channel name, sender, message count, and permalink are stored in metadata
+- The full thread text is embedded for semantic search
+
+### Microsoft Clarity
+
+**API Client** (`src/lib/clarity/api.ts`):
+- Data Export API for analytics data
+- Fetches metrics with configurable dimensions and date ranges
+- Imports scroll depth, engagement, click maps, and other behavioral data
+
+Clarity insights are stored as `clarity_insight` items with metric names and dimensions in metadata.
+
+### Web Search
+
+Web search is always available (no OAuth required) and uses server-side search APIs:
+
+- `web_search` tool: Broad queries returning multiple results
+- `scrape_url` tool: Deep content extraction from specific URLs using Cheerio
+- `save_web_research` tool: Persists findings to `web_research_items` table with embeddings
+
+The scraper (`src/lib/scraper.ts`) extracts:
+- Page title, meta description
+- Main content text (article body extraction)
+- Open Graph metadata
+- Image URLs
+
+### Adding a New Integration
+
+1. Add an entry to `INTEGRATIONS` array in `src/lib/integrations.ts`
+2. Create OAuth flow files in `src/lib/{service}/oauth.ts` if needed
+3. Create an API wrapper in `src/lib/{service}/api.ts`
+4. Instrument API calls with `traceFetch()` or `addLogEntry()` from `activity-logger.ts`
+5. Add a new `ItemType` to `src/lib/types.ts`
+6. Add an import API route in `src/app/api/{service}/`
+7. Add metadata field types to `SparkItemMetadata`

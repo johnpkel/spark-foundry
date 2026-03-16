@@ -1,0 +1,91 @@
+---
+title: AI Chat
+description: How to get the most from Spark Foundry's AI analyst — prompting strategies, tool use, and advanced techniques.
+---
+
+## AI Chat
+
+The AI chat in Spark Foundry isn't a generic chatbot — it's a **Spark analyst** that has read and understood everything in your workspace. It's designed to be direct, evidence-based, and sometimes opinionated.
+
+### How It Works
+
+When you send a message, the system:
+
+1. **Searches your data** — Finds the most relevant items using semantic similarity (not just keyword matching)
+2. **Includes images** — If relevant items have images, the AI can see and reason about them
+3. **Recalls past conversations** — Previous chat sessions in the same Spark are searchable too
+4. **Responds with evidence** — Cites specific items by name in a Sources section
+
+### Effective Prompting
+
+**Be specific about what you want:**
+- Instead of "summarize this," try "summarize the competitive positioning themes across these three articles"
+- Instead of "write a blog post," try "draft a 500-word blog post targeting enterprise CMOs about headless CMS migration, using the research I've collected"
+
+**Ask analytical questions:**
+- "What contradictions exist between these data sources?"
+- "Which of these campaign angles has the strongest supporting evidence?"
+- "What's missing from my research that I should look into?"
+
+**Request specific formats:**
+- "Create a comparison table of the three competitors"
+- "Give me 5 bullet points I can use in a presentation"
+- "Draft this as a Contentstack CMS entry with SEO fields"
+
+### Using @ Mentions
+
+Type `@` in the chat to reference specific items by name. This tells the AI to pay special attention to those items:
+
+- "@Product Launch Deck — what are the key dates mentioned?"
+- "Compare @Competitor A Analysis with @Competitor B Analysis"
+- "Use @Q1 Revenue Report to draft talking points"
+
+### Canvas-Scoped Chat
+
+When you select items on the visual canvas and then chat, the AI focuses exclusively on those items. This is powerful for:
+
+- Analyzing a specific subset of your research
+- Comparing items you've grouped together
+- Generating content from a curated selection
+
+### Editor Integration
+
+If you have text selected in the document editor when you chat, the AI can:
+- Suggest rewrites and improvements
+- Expand or condense the selected text
+- Adjust tone (more formal, more casual, etc.)
+- Add data-backed claims from your Spark items
+
+Suggestions appear as "proposal" blocks that you can accept or reject.
+
+### Web Research
+
+The AI can search the web on your behalf:
+- "Research the latest trends in headless CMS adoption"
+- "Find case studies of companies migrating from monolithic to headless CMS"
+
+After researching, findings are saved back to your Spark for future reference. This means the research compounds over time.
+
+### Chat Sessions
+
+Each conversation is saved as a session. You can:
+- View past sessions in the chat panel dropdown
+- Continue previous conversations
+- Start fresh sessions for new topics
+
+Sessions are also semantically indexed, so if you previously discussed a topic in an earlier session, the AI will find and reference that context.
+
+### Reading the AI's Work
+
+During complex requests, you'll see indicators of what the AI is doing:
+
+- **Searching knowledge base...** — Running semantic search on your items
+- **Tool calls** — The AI is using a specific tool (search, web scrape, etc.)
+- **Thinking** — Internal reasoning visible as a collapsible thought process
+- **Approval requests** — Write operations (like creating CMS entries) require your approval before executing
+
+### Tips
+
+- The AI is designed to push back on weak ideas. If it says an approach has problems, consider the feedback seriously.
+- End your messages with a clear ask: "...so should I pursue this angle?" gets a better response than open-ended prompts.
+- Use the activity log (lightning bolt icon) to see exactly what API calls the AI is making — useful for understanding how it found certain information.

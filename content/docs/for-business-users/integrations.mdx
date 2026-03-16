@@ -1,0 +1,84 @@
+---
+title: Connecting Integrations
+description: How to connect Contentstack, Google Drive, Slack, and other services to enrich your Spark workspaces.
+---
+
+## Connecting Integrations
+
+Spark Foundry becomes more powerful when connected to the tools your team already uses. Each integration brings different types of content into your Spark.
+
+### Contentstack
+
+**What it does:** Import entries and assets from your Contentstack CMS stacks.
+
+**How to connect:**
+1. Click the integrations panel (plug icon) in the Spark header
+2. Click **Connect** next to Contentstack
+3. Authorize with your Contentstack credentials
+4. Select the stack you want to import from
+
+**What you can import:**
+- CMS entries with all their fields and content type metadata
+- Assets from the media library (images, documents, videos)
+- Content type structure information
+
+**Why it matters:** When you import CMS entries, the AI understands the content type structure, field relationships, and editorial context. This means it can generate new CMS entries that match your existing content patterns.
+
+### Google Drive
+
+**What it does:** Search and import documents, spreadsheets, and presentations from your Google Drive.
+
+**How to connect:**
+1. Click **Connect** next to Google Drive in the integrations panel
+2. Sign in with your Google account
+3. Grant read-only access to your Drive
+
+**What you can import:**
+- Google Docs (converted to text)
+- Google Sheets (exported as structured text)
+- Google Slides (slide content extracted)
+- PDFs and other uploaded files
+
+**Why it matters:** Team knowledge often lives in Drive documents. By importing strategy docs, research reports, or meeting notes, the AI can synthesize this institutional knowledge with your other research.
+
+### Slack
+
+**What it does:** Save relevant Slack conversation threads to your Spark.
+
+**How it works:** The Slack integration uses a bot that can be triggered to save threads. When a thread is saved:
+- All messages are captured with sender information
+- The full thread text is indexed for semantic search
+- Channel and timestamp metadata are preserved
+
+**Why it matters:** Key decisions and insights often happen in Slack threads. Rather than losing that context, you can capture it in your Spark so the AI can reference team discussions when generating content.
+
+### Web Search
+
+**What it does:** Always available — lets the AI search the web and save findings.
+
+**No setup required.** When you ask the AI to research something, it can:
+- Search the web for relevant results
+- Deep-read specific pages for detailed content
+- Save findings to your Spark for future reference
+
+**Why it matters:** Your Spark accumulates knowledge over time. Web research saved today becomes instant context for tomorrow's questions.
+
+### Microsoft Clarity
+
+**What it does:** Import behavioral analytics data from Microsoft Clarity.
+
+**What you get:**
+- Scroll depth metrics
+- User engagement data
+- Click heatmap information
+- Session behavioral dimensions
+
+**Why it matters:** When creating content or campaign briefs, real user behavior data adds quantitative backing to qualitative research.
+
+### Integration Status
+
+The integrations panel shows the status of each connection:
+- **Active/Connected** — Ready to use
+- **Not Configured** — Needs setup (OAuth or API key)
+
+You can disconnect integrations at any time. Disconnecting doesn't remove already-imported items — it just stops new imports from that service.

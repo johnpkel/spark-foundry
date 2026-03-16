@@ -1,0 +1,126 @@
+---
+title: System Architecture
+description: Deep dive into Spark Foundry's architecture — request flow, data layer, AI pipeline, and real-time systems.
+---
+
+## System Architecture
+
+Spark Foundry follows a layered architecture with clear separation between the Next.js frontend, API routes (acting as a BFF), and external services.
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Browser (React)                       │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌────────┐ │
+│  │ ChatPanel│  │SparkEditor│  │  Canvas   │  │  Items │ │
+│  └────┬─────┘  └─────┬─────┘  └─────┬────┘  └───┬────┘ │
+│       │ SSE          │ Y.js/WS      │            │      │
+└───────┼──────────────┼──────────────┼────────────┼──────┘
+        │              │              │            │
+┌───────▼──────────────▼──────────────▼────────────▼──────┐
+│              Next.js API Routes (BFF Layer)              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
+│  │ /api/chat│  │/api/collab│  │/api/canvas│  │/api/*  │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───┬────┘  │
+└───────┼──────────────┼──────────────┼────────────┼──────┘
+        │              │              │            │
+┌───────▼──────────────▼──────────────▼────────────▼──────┐
+│                    External Services                     │
+│  ┌─────────┐  ┌─────────┐  ┌────────┐  ┌────────────┐  │
+│  │Anthropic│  │Voyage AI│  │Supabase│  │Contentstack│  │
+│  │ Claude  │  │Embedding│  │ + pgv  │  │ CMS + OAuth│  │
+│  └─────────┘  └─────────┘  └────────┘  └────────────┘  │
+│  ┌─────────┐  ┌─────────┐  ┌────────┐                  │
+│  │ Google  │  │  Slack  │  │Clarity │                  │
+│  │ Drive   │  │   Bot   │  │Analytics│                  │
+│  └─────────┘  └─────────┘  └────────┘                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Request Flow: Chat Message
+
+The most complex request flow in the app is a chat message. Here's what happens:
+
+1. **User sends message** — `ChatPanel.tsx` POSTs to `/api/chat` and immediately opens an SSE connection on the response
+2. **Session management** — The API creates or updates a `chat_sessions` row, saves the user message to `chat_messages`
+3. **RAG retrieval** — The message is embedded via Voyage AI, then three parallel vector searches run:
+   - `match_spark_items` — cosine similarity search on items
+   - `match_chat_sessions` — finds relevant past conversations
+   - `match_web_research_items` — finds saved web research
+4. **Context assembly** — Retrieved items, images, and metadata are formatted into a system prompt section
+5. **Claude streaming** — Anthropic's `messages.stream()` is called with the assembled context, conversation history, and MCP tools
+6. **Tool execution loop** — If Claude calls tools (semantic search, web scrape, CMS operations), results are fed back in a ReAct loop (up to N turns based on message complexity)
+7. **Response persistence** — The full response is saved to `chat_messages`, and the session embedding is updated asynchronously
+
+### Data Layer
+
+All persistent data lives in Supabase (PostgreSQL with pgvector extension):
+
+```
+sparks              ← Workspaces
+  ├── spark_items   ← Collected content (links, images, notes, etc.)
+  ├── chat_messages ← Conversation messages
+  ├── chat_sessions ← Grouped conversations with embeddings
+  ├── generated_artifacts ← CMS entries, campaign briefs
+  └── web_research_items  ← Saved web research
+```
+
+Three Supabase client configurations exist:
+
+| Client | File | Usage |
+|--------|------|-------|
+| `supabaseAdmin` | `lib/supabase/admin.ts` | Server routes — uses `SUPABASE_SERVICE_ROLE_KEY`, bypasses RLS |
+| Server utilities | `lib/supabase/server.ts` | Cookie-based auth for middleware |
+| Browser client | `lib/supabase/client.ts` | Client-side reads (anon key) |
+
+### Real-Time Architecture
+
+The app uses two real-time patterns:
+
+**SSE (Server-Sent Events)** — Used for chat streaming, activity log, and import progress. The pattern is consistent across all routes:
+
+```typescript
+return new Response(new ReadableStream({
+  async start(controller) {
+    const send = (data: Record<string, unknown>) =>
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+    // Flush headers immediately (important for reverse proxies)
+    controller.enqueue(encoder.encode(': connected\n\n'));
+
+    // Periodic keepalive to prevent idle timeouts
+    const keepalive = setInterval(() => {
+      controller.enqueue(encoder.encode(': keepalive\n\n'));
+    }, 15_000);
+
+    try {
+      // ... work ...
+      send({ type: 'done' });
+    } finally {
+      clearInterval(keepalive);
+      controller.close();
+    }
+  },
+}), {
+  headers: {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // Prevents Nginx buffering
+  },
+});
+```
+
+**Y.js + HocusPocus** — Used for collaborative document editing. The editor state is a CRDT (Conflict-free Replicated Data Type) that syncs through a HocusPocus WebSocket provider.
+
+### Activity Log System
+
+The activity log provides observability into every external API call the app makes:
+
+- **Server**: `addLogEntry()` in `activity-logger.ts` writes to a circular buffer and broadcasts via `EventEmitter`
+- **SSE endpoint**: `GET /api/logs` streams log entries in real-time
+- **Client**: `ActivityLogProvider.tsx` manages the SSE connection and provides entries via React Context
+- **UI**: `ActivityLogPanel.tsx` renders a 480px right drawer with filtering, search, and expandable rows
+
+Each entry includes service name, direction (request/response/event), level, timing, and optional request/response bodies. Services are color-coded: Anthropic=purple, Voyage=blue, Supabase=green, Contentstack=orange, Google=red, Slack=yellow, Clarity=teal.

@@ -1,0 +1,136 @@
+---
+title: Chat & Agent System
+description: How the AI chat works — Claude Agent SDK, MCP tools, ReAct loop, approval gates, and streaming architecture.
+---
+
+## Chat & Agent System
+
+The chat system in Spark Foundry uses Anthropic's Claude as a "Spark analyst" — a direct, opinionated strategic advisor that can search the user's data, browse the web, and generate business artifacts.
+
+### Agent Architecture
+
+The agent is built using the Claude Agent SDK and follows the MCP (Model Context Protocol) tool pattern:
+
+```
+src/lib/agent/
+  tools.ts           # MCP tool definitions (search, list, details)
+  tools-registry.ts  # Extended tool registry with web + CMS tools
+  react-loop.ts      # ReAct loop logic + thought parsing
+  approval.ts        # Write operation approval gates
+  agent.ts           # Agent wrapper
+```
+
+### MCP Tools
+
+Tools are defined using the Agent SDK's `tool()` function with Zod schemas:
+
+```typescript
+const semanticSearchSparkItems = tool(
+  'semantic_search_spark_items',
+  'Search for items using semantic similarity...',
+  {
+    query: z.string().describe('The natural language search query'),
+    spark_id: z.string().uuid(),
+    match_count: z.number().optional(),
+  },
+  async (args) => {
+    // Embed query, run vector search, return results + images
+  }
+);
+```
+
+The full tool set includes:
+
+| Tool | Type | Purpose |
+|------|------|---------|
+| `semantic_search_spark_items` | Read | Vector similarity search on items |
+| `search_spark_items` | Read | Exact keyword search on items |
+| `list_spark_items` | Read | List all items in a Spark |
+| `get_spark_details` | Read | Get Spark name/description |
+| `list_generated_artifacts` | Read | List previously generated artifacts |
+| `web_search` | Read | Search the web via API |
+| `scrape_url` | Read | Deep scrape a specific URL |
+| `save_web_research` | Write | Persist web research findings |
+| CMS tools | Write | Create/update Contentstack entries |
+
+### ReAct Loop
+
+For complex messages, the system uses a multi-turn ReAct (Reason + Act) loop. The turn budget is computed from message complexity:
+
+```typescript
+function computeTurnBudget(message: string): number {
+  // Short messages get 2-4 turns, complex requests get up to 8+
+  // Based on message length, question words, action verbs, etc.
+}
+```
+
+Each turn:
+1. Claude receives the conversation + any previous tool results
+2. Claude responds with text and/or tool calls
+3. Tool calls are executed (with approval gates for writes)
+4. Results are fed back as the next user message
+5. Repeat until Claude's `stop_reason` is `end_turn` or the budget is exhausted
+
+### Thought Streaming
+
+In agentic mode, Claude's text output is routed through a `ThoughtStreamParser` that separates internal reasoning (wrapped in `<thought>` tags) from user-facing text. Thoughts are streamed to the client as a separate SSE event type, allowing the UI to show a "thinking" indicator.
+
+```typescript
+const parser = new ThoughtStreamParser();
+parser.onThought = (text) => send({ type: 'thought', content: text, turn });
+parser.onText = (text) => {
+  fullResponse += text;
+  send({ type: 'text', content: text });
+};
+```
+
+### Approval Gates
+
+Write operations (saving web research, creating CMS entries) require user approval before execution:
+
+```typescript
+if (isWriteTool(toolName)) {
+  send({
+    type: 'approval_request',
+    id: approvalId,
+    tool: toolName,
+    description: describeWriteOperation(toolName, toolInput),
+    preview: toolInput,
+  });
+
+  const approved = await requestApproval(approvalId);
+  if (!approved) {
+    // Return rejection to Claude, who adjusts accordingly
+  }
+}
+```
+
+The approval system uses a server-side promise map: the SSE stream sends an approval request to the client, the client POSTs to `/api/chat/approve`, and the pending promise resolves.
+
+### SSE Event Types
+
+The chat SSE stream sends these event types:
+
+| Event | Payload | Purpose |
+|-------|---------|---------|
+| `status` | `{ content: string }` | Loading indicator text |
+| `context` | `{ items: VectorContextItem[] }` | RAG context for 3D visualization |
+| `budget` | `{ used, total, tokens_used }` | Turn budget progress |
+| `text` | `{ content: string }` | Streamed response text |
+| `thought` | `{ content: string, turn }` | Internal reasoning (agentic mode) |
+| `action` | `{ tool, input, turn }` | Tool call initiated |
+| `observation` | `{ tool, summary, success, turn }` | Tool result summary |
+| `approval_request` | `{ id, tool, description, preview }` | Write operation approval |
+| `done` | `{ session_id }` | Stream complete |
+| `error` | `{ content: string }` | Error message |
+
+### System Prompt
+
+The system prompt defines Claude as a "Spark analyst" with specific behavioral guidelines:
+
+- Lead with assessment, support with evidence
+- Be honest about weak ideas — push back directly
+- Keep responses concise (100-200 words unless generating artifacts)
+- Always end with 2-3 "Next steps" follow-up questions
+- Include a Sources section citing referenced items
+- After web research, always save findings for future conversations

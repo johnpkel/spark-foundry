@@ -1,0 +1,10 @@
+{
+  "title": "Spark Foundry",
+  "pages": [
+    "index",
+    "---For Developers---",
+    "./for-developers",
+    "---For Business Users---",
+    "./for-business-users"
+  ]
+}

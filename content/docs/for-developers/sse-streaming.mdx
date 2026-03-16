@@ -1,0 +1,129 @@
+---
+title: SSE Streaming Patterns
+description: How Server-Sent Events are used throughout Spark Foundry for real-time features.
+---
+
+## SSE Streaming Patterns
+
+Spark Foundry uses Server-Sent Events (SSE) extensively for real-time communication. SSE was chosen over WebSockets because it works through CDNs, reverse proxies (including Nginx on Contentstack Launch), and requires no special server infrastructure.
+
+### The Core SSE Pattern
+
+Every SSE endpoint in the app follows the same pattern:
+
+```typescript
+export async function POST(request: NextRequest) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: Record<string, unknown>) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+      // 1. Flush immediately to establish the connection
+      controller.enqueue(encoder.encode(': connected\n\n'));
+
+      // 2. Keepalive to prevent idle timeouts
+      const keepalive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch { /* stream closed */ }
+      }, 15_000);
+
+      try {
+        // 3. Do work, send events
+        send({ type: 'progress', value: 50 });
+        send({ type: 'done' });
+      } finally {
+        clearInterval(keepalive);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
+```
+
+### Key Design Decisions
+
+**Immediate flush** — The `: connected` comment is sent before any work begins. This is critical for deployment behind reverse proxies (like Nginx on Contentstack Launch) that may timeout if no bytes are sent within a few seconds.
+
+**Keepalive comments** — SSE comments (lines starting with `:`) are sent every 15 seconds. These are ignored by the EventSource API but keep the TCP connection alive through load balancers that have idle timeouts.
+
+**`X-Accel-Buffering: no`** — This header tells Nginx to disable response buffering, ensuring SSE events are forwarded to the client immediately rather than being batched.
+
+**JSON payloads** — All events send JSON in the `data` field with a `type` discriminator. This allows the client to use a single `EventSource` connection and route events by type.
+
+### SSE Endpoints in the App
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `POST /api/chat` | POST | Chat responses (streaming text, tool calls, approvals) |
+| `GET /api/logs` | GET | Activity log stream (broadcasts to all connected clients) |
+| `POST /api/contentstack/import` | POST | CMS import progress |
+| `POST /api/embeddings/analyze` | POST | Image analysis progress |
+
+### Client-Side Consumption
+
+For POST-based SSE (like chat), the client reads the response stream manually:
+
+```typescript
+const res = await fetch('/api/chat', { method: 'POST', body: JSON.stringify(payload) });
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  buffer += decoder.decode(value, { stream: true });
+  const lines = buffer.split('\n');
+  buffer = lines.pop()!;
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const data = JSON.parse(line.slice(6));
+      // Route by data.type
+    }
+  }
+}
+```
+
+For GET-based SSE (like the activity log), the native `EventSource` API is used:
+
+```typescript
+const es = new EventSource('/api/logs');
+es.onmessage = (event) => {
+  const entry = JSON.parse(event.data);
+  // Handle log entry
+};
+```
+
+### Activity Log Broadcasting
+
+The activity log uses a unique pattern — a server-side `EventEmitter` that broadcasts to all connected SSE clients:
+
+```typescript
+// Server: src/lib/activity-logger.ts
+import { EventEmitter } from 'events';
+
+export const logEmitter = new EventEmitter();
+const buffer: LogEntry[] = []; // Circular buffer
+
+export function addLogEntry(entry: Partial<LogEntry>) {
+  const full = { id: uuid(), timestamp: Date.now(), ...entry };
+  buffer.push(full);
+  if (buffer.length > MAX_BUFFER) buffer.shift();
+  logEmitter.emit('entry', full);
+}
+```
+
+The SSE endpoint subscribes to this emitter and forwards entries to the client. Multiple browser tabs each get their own SSE connection but share the same server-side buffer.

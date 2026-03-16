@@ -1,0 +1,115 @@
+---
+title: Venus Design System & Theming
+description: How the Venus Design System powers Spark Foundry's UI — CSS custom properties, Tailwind v4 integration, and dark mode.
+---
+
+## Venus Design System & Theming
+
+Spark Foundry uses a custom theme called "Venus" — a design system built on CSS custom properties that maps to Tailwind CSS v4 utility classes.
+
+### Architecture
+
+The theme is defined in three layers:
+
+1. **CSS Custom Properties** (`globals.css :root` and `.dark`) — Raw color values
+2. **Tailwind Theme Mapping** (`globals.css @theme inline`) — Maps CSS vars to Tailwind colors
+3. **Component Usage** — Components use Tailwind classes like `bg-venus-purple` or `text-venus-gray-500`
+
+### Color Palette
+
+**Brand Colors:**
+
+| Token | Light | Dark | Usage |
+|-------|-------|------|-------|
+| `--venus-purple` | `#6c5ce7` | `#7c6ef0` | Primary brand, buttons, links |
+| `--venus-purple-dark` | `#3e3871` | `#b8aef5` | Hover states, emphasis |
+| `--venus-purple-light` | `#efedfc` | `#1f1b2e` | Backgrounds, selections |
+| `--venus-purple-medium` | `#9387ed` | `#a599f2` | Secondary accents |
+| `--venus-purple-deep` | `#5d50bf` | `#6558d4` | Button hover |
+
+**Neutral Scale** — 8 steps from near-white to near-black:
+
+```css
+--venus-gray-50:  /* Lightest background */
+--venus-gray-100: /* Secondary background */
+--venus-gray-200: /* Borders */
+--venus-gray-300: /* Disabled borders, scrollbar */
+--venus-gray-400: /* Placeholder text, muted text */
+--venus-gray-500: /* Secondary text */
+--venus-gray-600: /* Body text (dark mode) */
+--venus-gray-700: /* Primary text */
+```
+
+**Semantic Colors** — Status indicators with light backgrounds for badges:
+
+```css
+--venus-green / --venus-green-light   /* Success */
+--venus-red / --venus-red-light       /* Error */
+--venus-blue / --venus-blue-light     /* Info */
+--venus-yellow / --venus-yellow-light /* Warning */
+```
+
+### Dark Mode Implementation
+
+Dark mode uses a `.dark` class on `<html>`, toggled by localStorage:
+
+```typescript
+// Root layout inline script (runs before paint)
+var t = localStorage.getItem('spark-theme');
+var dark = t === 'dark' || (!t || t === 'system')
+  && window.matchMedia('(prefers-color-scheme: dark)').matches;
+if (dark) document.documentElement.classList.add('dark');
+```
+
+This inline script prevents FOUC (Flash of Unstyled Content). The `ThemeProvider` component manages the toggle state and re-applies the class on changes.
+
+Key dark mode design decisions:
+- **True gray base** — Minimal blue tint in dark mode neutrals for a modern look
+- **Lifted purples** — Brand purple is shifted lighter for contrast on dark backgrounds
+- **Softer status colors** — Greens, reds, blues are desaturated to avoid neon appearance
+- **Deeper shadows** — Higher opacity shadows for depth perception on dark surfaces
+
+### Tailwind v4 Integration
+
+Tailwind v4 uses the `@theme inline` directive to create utility classes from CSS custom properties:
+
+```css
+@theme inline {
+  --color-background: var(--background);
+  --color-venus-purple: var(--venus-purple);
+  --color-venus-gray-200: var(--venus-gray-200);
+  /* ... */
+}
+```
+
+This means `bg-venus-purple` in a component resolves to the correct value for the current theme mode without any JavaScript.
+
+### Shadows
+
+Three shadow levels are defined, with the medium and large levels incorporating a purple tint in light mode:
+
+```css
+/* Light mode */
+--venus-shadow-md: 0px 2px 4px rgba(0,0,0,0.14),
+                   0px 5px 5px rgba(0,0,0,0.12),
+                   0px 1px 10px rgba(108,92,231,0.2);
+
+/* Dark mode — deeper, no purple tint */
+--venus-shadow-md: 0px 2px 6px rgba(0,0,0,0.5),
+                   0px 1px 10px rgba(0,0,0,0.3);
+```
+
+### Service Colors (Activity Log)
+
+The activity log uses a distinct color per external service:
+
+| Service | Color | Hex |
+|---------|-------|-----|
+| Anthropic | Purple | `#6c5ce7` |
+| Voyage AI | Blue | `#00b9e0` |
+| Supabase | Green | `#007a52` |
+| Contentstack | Orange | (Contentstack brand) |
+| Google | Red | (Google brand) |
+| Slack | Yellow | `#ffae0a` |
+| Clarity | Teal | Custom |
+| Internal | Gray | `#647696` |
