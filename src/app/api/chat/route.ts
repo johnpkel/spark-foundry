@@ -1,10 +1,18 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { generateQueryEmbedding, generateEmbedding } from '@/lib/embeddings';
-import { scrapePage } from '@/lib/scraper';
+import { generateQueryEmbedding } from '@/lib/embeddings';
 import { addLogEntry } from '@/lib/activity-logger';
 import type { VectorContextItem } from '@/lib/types';
+import {
+  ALL_TOOLS, TOOL_LABELS, executeTool,
+  isWriteTool, summarizeToolInput, describeWriteOperation, summarizeToolResult,
+} from '@/lib/agent/tools-registry';
+import {
+  computeTurnBudget, ThoughtStreamParser,
+  AGENTIC_SYSTEM_PROMPT, CMS_SYSTEM_PROMPT,
+} from '@/lib/agent/react-loop';
+import { requestApproval } from '@/lib/agent/approval';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,104 +47,7 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 Aim for 100-200 words. Only exceed this for full artifacts (campaign briefs, CMS entries). No bullet lists longer than 5 items. No introductory sentences — start with the substance.
 
 ## Ending every response
-End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.`;
-
-// Tool definitions for the Anthropic API
-const TOOLS: Anthropic.Tool[] = [
-  {
-    name: 'semantic_search',
-    description: 'Search for items in the Spark using semantic similarity. Finds conceptually related items even without exact keyword matches. Use this as your primary search tool.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        query: { type: 'string', description: 'The natural language search query' },
-        spark_id: { type: 'string', description: 'The Spark ID to search in' },
-      },
-      required: ['query', 'spark_id'],
-    },
-  },
-  {
-    name: 'keyword_search',
-    description: 'Search for items by exact keyword or phrase match. Use when looking for a specific term.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        query: { type: 'string', description: 'The keyword or phrase to search for' },
-        spark_id: { type: 'string', description: 'The Spark ID to search in' },
-      },
-      required: ['query', 'spark_id'],
-    },
-  },
-  {
-    name: 'list_items',
-    description: 'List all items in the Spark. Use for a complete overview of everything collected.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        spark_id: { type: 'string', description: 'The Spark ID to list items from' },
-      },
-      required: ['spark_id'],
-    },
-  },
-  {
-    name: 'get_spark_details',
-    description: 'Get the Spark name, description, and metadata.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        spark_id: { type: 'string', description: 'The Spark ID' },
-      },
-      required: ['spark_id'],
-    },
-  },
-  {
-    name: 'scrape_url',
-    description: 'Deep-read a specific webpage to extract its full text content, title, and description. Use this when you need detailed content from a known URL.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        url: { type: 'string', description: 'The URL to scrape' },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'save_web_research',
-    description: 'Save web research findings to the Spark for future reference. Always call this after completing web research to persist the findings.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        title: { type: 'string', description: 'Descriptive title for the research' },
-        query: { type: 'string', description: 'The original research question' },
-        content: { type: 'string', description: 'Synthesized markdown research content' },
-        summary: { type: 'string', description: 'Short summary (1-2 sentences) for quick reference' },
-        sources: {
-          type: 'array',
-          description: 'Array of source URLs with titles',
-          items: {
-            type: 'object',
-            properties: {
-              url: { type: 'string' },
-              title: { type: 'string' },
-              snippet: { type: 'string' },
-            },
-            required: ['url', 'title'],
-          },
-        },
-        spark_id: { type: 'string', description: 'The Spark ID to link this research to' },
-      },
-      required: ['title', 'query', 'content', 'summary', 'sources', 'spark_id'],
-    },
-  },
-];
-
-// Combined tools: our custom tools + Anthropic's server-hosted web_search
-const WEB_SEARCH_TOOL: Anthropic.WebSearchTool20250305 = {
-  type: 'web_search_20250305',
-  name: 'web_search',
-  max_uses: 10,
-};
-const ALL_TOOLS: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] = [...TOOLS, WEB_SEARCH_TOOL];
+End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.${CMS_SYSTEM_PROMPT}`;
 
 const MAX_IMAGES_PER_RESULT = 5;
 
@@ -159,181 +70,6 @@ function getItemImageUrl(item: Record<string, unknown>): string | null {
   // The text metadata (title, summary) is still sent for context.
 
   return null;
-}
-
-/** Build multimodal tool result: JSON text + actual image blocks for image items */
-function buildToolContent(
-  items: Record<string, unknown>[],
-  prefix: string
-): Anthropic.ToolResultBlockParam['content'] {
-  const textData = items.map((item) => ({
-    id: item.id,
-    type: item.type,
-    title: item.title,
-    content: (item.content as string)?.substring(0, 2000),
-    summary: item.summary,
-    metadata: item.metadata,
-    ...(item.similarity !== undefined && { similarity: item.similarity }),
-    ...(item.created_at !== undefined && { created_at: item.created_at }),
-  }));
-
-  const content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam> = [
-    { type: 'text', text: `${prefix}\n${JSON.stringify(textData, null, 2)}` },
-  ];
-
-  // Append actual image blocks so Claude can visually inspect them
-  let imageCount = 0;
-  for (const item of items) {
-    if (imageCount >= MAX_IMAGES_PER_RESULT) break;
-    const imageUrl = getItemImageUrl(item);
-    if (imageUrl) {
-      content.push(
-        { type: 'image', source: { type: 'url', url: imageUrl } },
-        { type: 'text', text: `Above image: "${item.title}"` }
-      );
-      imageCount++;
-    }
-  }
-
-  return content;
-}
-
-// Execute a tool call and return multimodal content (text + images)
-async function executeTool(
-  name: string,
-  input: Record<string, unknown>
-): Promise<Anthropic.ToolResultBlockParam['content']> {
-  switch (name) {
-    case 'semantic_search': {
-      const query = input.query as string;
-      const sparkId = input.spark_id as string;
-      const queryEmbedding = await generateQueryEmbedding(query);
-      if (queryEmbedding) {
-        const { data, error } = await supabaseAdmin.rpc('match_spark_items', {
-          p_spark_id: sparkId,
-          query_embedding: JSON.stringify(queryEmbedding),
-          match_threshold: 0.3,
-          match_count: 10,
-        });
-        if (!error && data?.length > 0) {
-          return buildToolContent(data, `Found ${data.length} semantically relevant items:`);
-        }
-      }
-      // Fall through to keyword search
-      const { data: kwData } = await supabaseAdmin
-        .from('spark_items')
-        .select('id, type, title, content, summary, metadata')
-        .eq('spark_id', sparkId)
-        .or(
-          `title.ilike.%${query}%,content.ilike.%${query}%,summary.ilike.%${query}%`
-        )
-        .limit(10);
-      return buildToolContent(kwData || [], `Found ${kwData?.length || 0} items (keyword match):`);
-    }
-
-    case 'keyword_search': {
-      const query = input.query as string;
-      const sparkId = input.spark_id as string;
-      const { data } = await supabaseAdmin
-        .from('spark_items')
-        .select('id, type, title, content, summary, metadata')
-        .eq('spark_id', sparkId)
-        .or(
-          `title.ilike.%${query}%,content.ilike.%${query}%,summary.ilike.%${query}%`
-        )
-        .limit(20);
-      return buildToolContent(data || [], `Found ${data?.length || 0} items:`);
-    }
-
-    case 'list_items': {
-      const sparkId = input.spark_id as string;
-      const { data } = await supabaseAdmin
-        .from('spark_items')
-        .select('id, type, title, content, summary, metadata, created_at')
-        .eq('spark_id', sparkId)
-        .order('created_at', { ascending: false });
-      if (!data?.length) return 'No items in this Spark yet.';
-      return buildToolContent(data, `Found ${data.length} items:`);
-    }
-
-    case 'get_spark_details': {
-      const sparkId = input.spark_id as string;
-      const { data } = await supabaseAdmin
-        .from('sparks')
-        .select('*')
-        .eq('id', sparkId)
-        .single();
-      return JSON.stringify(data, null, 2);
-    }
-
-    case 'scrape_url': {
-      const url = input.url as string;
-      const result = await scrapePage(url);
-      if (!result) {
-        return JSON.stringify({ error: 'Failed to scrape page', url });
-      }
-      return JSON.stringify({
-        url,
-        title: result.og_title || url,
-        description: result.og_description || null,
-        text: result.text.substring(0, 30_000),
-      });
-    }
-
-    case 'save_web_research': {
-      const title = input.title as string;
-      const query = input.query as string;
-      const content = input.content as string;
-      const summary = input.summary as string;
-      const sources = input.sources as Array<{ url: string; title: string; snippet?: string }>;
-      const sparkId = input.spark_id as string;
-
-      // Insert the research item
-      const { data: researchItem, error: insertError } = await supabaseAdmin
-        .from('web_research_items')
-        .insert({ title, query, content, summary, sources })
-        .select('id')
-        .single();
-
-      if (insertError || !researchItem) {
-        console.error('[save_web_research] Insert failed:', insertError?.message);
-        return JSON.stringify({ error: 'Failed to save research', details: insertError?.message });
-      }
-
-      // Link to Spark via join table
-      const { error: joinError } = await supabaseAdmin
-        .from('spark_web_research')
-        .insert({ spark_id: sparkId, web_research_item_id: researchItem.id });
-
-      if (joinError) {
-        console.error('[save_web_research] Join insert failed:', joinError.message);
-      }
-
-      // Fire-and-forget: generate embedding
-      const embeddingText = `[web_research] ${title}\nQuery: ${query}\n${summary || ''}\n${content}`;
-      generateEmbedding(embeddingText)
-        .then(async (embedding) => {
-          if (embedding) {
-            await supabaseAdmin
-              .from('web_research_items')
-              .update({ embedding: JSON.stringify(embedding) })
-              .eq('id', researchItem.id);
-          }
-        })
-        .catch((err) => {
-          console.error('[save_web_research] Embedding failed:', err);
-        });
-
-      return JSON.stringify({
-        success: true,
-        id: researchItem.id,
-        message: `Research "${title}" saved and linked to Spark. Embedding generation in progress.`,
-      });
-    }
-
-    default:
-      return `Unknown tool: ${name}`;
-  }
 }
 
 interface RetrievedContext {
@@ -813,7 +549,29 @@ export async function POST(request: NextRequest) {
           editorContextSection += `\n\n## Selected Text\nThe user has highlighted the following text in the document and is asking about it specifically:\n\n> ${selected_text}\n\nWhen you suggest an improvement, rewrite, or replacement for this text, format your replacement inside a fenced code block with the language identifier \`proposal\` — like this:\n\n\`\`\`proposal\nYour replacement text here\n\`\`\`\n\nProvide exactly one \`proposal\` block per response when suggesting edits. Explain your changes in plain text outside the block. Use the RAG pipeline (semantic_search tool) to support your suggestions with context from the Spark's knowledge base where relevant.`;
         }
 
-        const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection;
+        // ── Skills metadata (progressive disclosure: Level 1) ───
+        let skillsPromptSection = '';
+        const { data: activeSkills } = await supabaseAdmin
+          .from('skills')
+          .select('id, name, description')
+          .or(`spark_id.eq.${spark_id},spark_id.is.null`)
+          .eq('is_active', true);
+
+        if (activeSkills && activeSkills.length > 0) {
+          const skillList = activeSkills
+            .map((s: { id: string; name: string; description: string }) =>
+              `- **${s.name}** (id: ${s.id}): ${s.description}`)
+            .join('\n');
+          skillsPromptSection = `\n\n## Available Skills\nThe following skills are available. When a user request matches a skill, call the \`use_skill\` tool with the skill's id to load its full instructions before proceeding.\n\n${skillList}`;
+        }
+
+        // ── Build prompts ───────────────────────────────────────
+        const turnBudget = computeTurnBudget(message);
+        const isAgentic = turnBudget > 4;
+        const systemPrompt = SYSTEM_PROMPT + ragContext.text + editorContextSection
+          + skillsPromptSection
+          + (isAgentic ? AGENTIC_SYSTEM_PROMPT : '');
+        const maxTokens = isAgentic ? 4096 : 1024;
 
         // Send context items to client for 3D visualization (before any tool use/text)
         send({ type: 'context', items: ragContext.items });
@@ -835,46 +593,56 @@ export async function POST(request: NextRequest) {
         ];
 
         let fullResponse = '';
+        const cumulativeTokens = { input: 0, output: 0 };
 
-        const TOOL_LABELS: Record<string, string> = {
-          semantic_search: 'Searching your Spark...',
-          keyword_search: 'Searching by keyword...',
-          list_items: 'Loading items...',
-          get_spark_details: 'Getting Spark details...',
-          scrape_url: 'Reading webpage...',
-          save_web_research: 'Saving research...',
-          web_search: 'Searching the web...',
-        };
-
-        // Unified streaming loop — every turn streams text to the client.
-        // No Phase 1/Phase 2 split; tool routing and final response use
-        // the same streaming path.
-        for (let turn = 0; turn < 10; turn++) {
+        // ── ReAct streaming loop ────────────────────────────────
+        for (let turn = 0; turn < turnBudget; turn++) {
           send({ type: 'status', content: turn === 0 ? 'Generating response...' : 'Thinking...' });
+          send({ type: 'budget', used: turn, total: turnBudget, tokens_used: cumulativeTokens.input + cumulativeTokens.output });
 
           const streamStart = Date.now();
           addLogEntry({
             service: 'anthropic',
             direction: 'request',
             level: 'info',
-            summary: `messages.stream (turn ${turn})`,
-            requestBody: { model: 'claude-sonnet-4-6', stream: true, turn },
+            summary: `messages.stream (turn ${turn}/${turnBudget})`,
+            requestBody: { model: 'claude-sonnet-4-6', stream: true, turn, turnBudget },
           });
 
           const stream = anthropic.messages.stream({
             model: 'claude-sonnet-4-6',
-            max_tokens: 1024,
+            max_tokens: maxTokens,
             system: systemPrompt,
             tools: ALL_TOOLS,
             messages,
           });
 
-          stream.on('text', (text) => {
+          // Route streaming text through ThoughtStreamParser when agentic
+          const parser = new ThoughtStreamParser();
+          parser.onThought = (text) => {
+            send({ type: 'thought', content: text, turn });
+          };
+          parser.onText = (text) => {
             fullResponse += text;
             send({ type: 'text', content: text });
+          };
+
+          stream.on('text', (text) => {
+            if (isAgentic) {
+              parser.feed(text);
+            } else {
+              fullResponse += text;
+              send({ type: 'text', content: text });
+            }
           });
 
           const response = await stream.finalMessage();
+          if (isAgentic) parser.flush();
+
+          // Track token usage
+          cumulativeTokens.input += response.usage.input_tokens;
+          cumulativeTokens.output += response.usage.output_tokens;
+
           addLogEntry({
             service: 'anthropic',
             direction: 'response',
@@ -900,50 +668,128 @@ export async function POST(request: NextRequest) {
           // No custom tool calls — done or server-tools-only
           if (toolUseBlocks.length === 0) {
             if (response.stop_reason === 'end_turn') break;
-            // Server tools only — continue loop
-            messages = [
-              ...messages,
-              { role: 'assistant', content: response.content },
-            ];
+            // Only append assistant message if no unpaired server_tool_use blocks
+            // (Anthropic's infrastructure pairs server tool calls transparently)
+            const hasServerTools = response.content.some(b => b.type === 'server_tool_use');
+            if (!hasServerTools) {
+              messages = [
+                ...messages,
+                { role: 'assistant', content: response.content },
+              ];
+            }
             continue;
           }
 
-          // Execute custom tools
-          for (const toolUse of toolUseBlocks) {
-            send({ type: 'status', content: TOOL_LABELS[toolUse.name] || 'Processing...' });
-          }
+          // Execute custom tools (sequential with approval gates for writes)
+          const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
-          const toolResults = await Promise.all(
-            toolUseBlocks.map(async (toolUse) => {
-              addLogEntry({
-                service: 'internal',
-                direction: 'event',
-                level: 'info',
-                summary: `Tool: ${toolUse.name}`,
-                requestBody: toolUse.input,
+          for (const toolUse of toolUseBlocks) {
+            const toolName = toolUse.name;
+            const toolInput = toolUse.input as Record<string, unknown>;
+
+            send({
+              type: 'action',
+              tool: toolName,
+              input: summarizeToolInput(toolName, toolInput),
+              turn,
+            });
+            send({ type: 'status', content: TOOL_LABELS[toolName] || 'Processing...' });
+
+            addLogEntry({
+              service: 'internal',
+              direction: 'event',
+              level: 'info',
+              summary: `Tool: ${toolName}`,
+              requestBody: toolInput,
+            });
+
+            // Approval gate for write/destructive tools
+            if (isWriteTool(toolName)) {
+              const approvalId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              send({
+                type: 'approval_request',
+                id: approvalId,
+                tool: toolName,
+                description: describeWriteOperation(toolName, toolInput),
+                preview: toolInput,
+                turn,
               });
-              return {
-                type: 'tool_result' as const,
+
+              const approved = await requestApproval(approvalId);
+
+              if (!approved) {
+                toolResults.push({
+                  type: 'tool_result',
+                  tool_use_id: toolUse.id,
+                  content: JSON.stringify({ rejected: true, message: 'User declined this operation.' }),
+                });
+                send({
+                  type: 'observation',
+                  tool: toolName,
+                  summary: 'User declined this operation.',
+                  success: false,
+                  turn,
+                });
+                continue;
+              }
+            }
+
+            try {
+              const result = await executeTool(toolName, toolInput);
+              toolResults.push({
+                type: 'tool_result',
                 tool_use_id: toolUse.id,
-                content: await executeTool(
-                  toolUse.name,
-                  toolUse.input as Record<string, unknown>
-                ),
-              };
-            })
-          );
+                content: result,
+              });
+              send({
+                type: 'observation',
+                tool: toolName,
+                summary: summarizeToolResult(toolName, result),
+                success: true,
+                turn,
+              });
+            } catch (err) {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: JSON.stringify({ error: errorMsg }),
+                is_error: true,
+              });
+              send({
+                type: 'observation',
+                tool: toolName,
+                summary: `Error: ${errorMsg}`,
+                success: false,
+                turn,
+              });
+            }
+          }
 
           messages = [
             ...messages,
             { role: 'assistant', content: response.content },
             { role: 'user', content: toolResults },
           ];
+
+          // Token budget check
+          if (cumulativeTokens.input + cumulativeTokens.output > 100_000) {
+            send({ type: 'text', content: '\n\n---\n*Token budget reached. Please continue in a follow-up message.*' });
+            fullResponse += '\n\n---\n*Token budget reached.*';
+            break;
+          }
+        }
+
+        // If budget exhausted mid-tool-use with no final text, notify user
+        if (!fullResponse) {
+          const notice = '*Turn budget exhausted before a final response could be generated. Please continue in a follow-up message.*';
+          send({ type: 'text', content: notice });
+          fullResponse = notice;
         }
 
         // Save the full response
-        let assistantMessageId: string | null = null;
         if (fullResponse && !skip_persist) {
-          const { data: savedAssistant } = await supabaseAdmin
+          await supabaseAdmin
             .from('chat_messages')
             .insert({
               spark_id,
@@ -953,8 +799,6 @@ export async function POST(request: NextRequest) {
             })
             .select('id')
             .single();
-
-          assistantMessageId = savedAssistant?.id || null;
 
           // Update session timestamp
           if (sessionId) {

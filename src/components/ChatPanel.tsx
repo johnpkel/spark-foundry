@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Send, Bot, User, Loader2, Sparkles, Search, Lightbulb, History, Plus,
-  Wand2, Check, Copy, X, FileCheck2,
+  Wand2, Check, Copy, X, FileCheck2, Brain, Zap, Eye, ShieldCheck, ChevronDown,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import ChatSessionSidebar from './ChatSessionSidebar';
+import SkillsPanel from './SkillsPanel';
 import VectorVisualization from './VectorVisualizationDynamic';
 import ChatMentionDropdown from './ChatMentionDropdown';
 import type { MentionOption } from './ChatMentionDropdown';
@@ -22,11 +23,23 @@ interface MessagePart {
   content: string;
 }
 
+interface AgentStep {
+  type: 'thought' | 'action' | 'observation' | 'approval';
+  content: string;
+  tool?: string;
+  turn: number;
+  approvalId?: string;
+  approved?: boolean;
+  preview?: Record<string, unknown>;
+}
+
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   contextItems?: VectorContextItem[];
   userQuery?: string;
+  agentSteps?: AgentStep[];
+  turnBudget?: { used: number; total: number; tokensUsed: number };
 }
 
 interface MentionState {
@@ -202,6 +215,141 @@ function ProposalCard({
   );
 }
 
+// ─── Agent step sub-components ────────────────────────
+
+function ThoughtBubble({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > 120;
+
+  return (
+    <div className="my-1.5 rounded-lg bg-venus-purple-light/30 border border-venus-purple/15">
+      <button
+        onClick={() => isLong && setExpanded(!expanded)}
+        className="flex items-start gap-2 px-3 py-2 w-full text-left"
+      >
+        <Brain size={12} className="text-venus-purple/60 mt-0.5 shrink-0" />
+        <span className={`text-xs text-venus-gray-500 font-mono leading-relaxed ${!expanded && isLong ? 'line-clamp-2' : ''}`}>
+          {content}
+        </span>
+        {isLong && (
+          <ChevronDown
+            size={12}
+            className={`text-venus-gray-400 shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function ActionCard({ tool, input, isActive }: { tool: string; input: string; isActive?: boolean }) {
+  return (
+    <div className="my-1.5 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200/50 text-xs">
+      {isActive ? (
+        <Loader2 size={12} className="text-blue-500 animate-spin shrink-0" />
+      ) : (
+        <Zap size={12} className="text-blue-500 shrink-0" />
+      )}
+      <span className="font-semibold text-blue-700">{tool}</span>
+      <span className="text-blue-500 truncate">{input}</span>
+    </div>
+  );
+}
+
+function ObservationCard({ tool, summary, success }: { tool: string; summary: string; success: boolean }) {
+  return (
+    <div className={`my-1.5 flex items-start gap-2 px-3 py-2 rounded-lg text-xs ${
+      success ? 'bg-green-50 border border-green-200/50' : 'bg-red-50 border border-red-200/50'
+    }`}>
+      <Eye size={12} className={`mt-0.5 shrink-0 ${success ? 'text-green-500' : 'text-red-500'}`} />
+      <div className="min-w-0">
+        <span className={`font-semibold ${success ? 'text-green-700' : 'text-red-700'}`}>{tool}</span>
+        <span className={`ml-1.5 ${success ? 'text-green-600' : 'text-red-600'}`}>{summary}</span>
+      </div>
+    </div>
+  );
+}
+
+function ApprovalCard({
+  tool,
+  description,
+  preview,
+  approvalId,
+  approved,
+  onApprove,
+}: {
+  tool: string;
+  description: string;
+  preview?: Record<string, unknown>;
+  approvalId: string;
+  approved?: boolean;
+  onApprove: (id: string, approved: boolean) => void;
+}) {
+  const isPending = approved === undefined;
+
+  return (
+    <div className="my-2 rounded-lg border border-amber-300 bg-amber-50 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-100/60 border-b border-amber-200">
+        <ShieldCheck size={12} className="text-amber-600" />
+        <span className="text-xs font-semibold text-amber-700">Approval Required</span>
+        <span className="text-xs text-amber-600 ml-auto">{tool}</span>
+      </div>
+      <div className="px-3 py-2">
+        <p className="text-xs text-amber-800 mb-2">{description}</p>
+        {preview?.entry_data !== undefined && (
+          <details className="mb-2">
+            <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-700">
+              Preview entry data
+            </summary>
+            <pre className="mt-1 text-[10px] text-amber-700 bg-amber-100/50 rounded p-2 overflow-x-auto max-h-40">
+              {JSON.stringify(preview.entry_data, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+      <div className="flex items-center gap-2 px-3 py-2 border-t border-amber-200 bg-amber-50">
+        {isPending ? (
+          <>
+            <button
+              onClick={() => onApprove(approvalId, true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors"
+            >
+              <Check size={11} />
+              Approve
+            </button>
+            <button
+              onClick={() => onApprove(approvalId, false)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+            >
+              <X size={11} />
+              Reject
+            </button>
+            <span className="text-[10px] text-amber-500 ml-auto">Enter to approve, Esc to reject</span>
+          </>
+        ) : (
+          <span className={`text-xs font-semibold ${approved ? 'text-green-600' : 'text-red-600'}`}>
+            {approved ? 'Approved' : 'Rejected'}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TurnBudgetIndicator({ used, total, tokensUsed }: { used: number; total: number; tokensUsed: number }) {
+  if (total <= 4) return null; // Don't show for simple Q&A
+  const pct = Math.min((used / total) * 100, 100);
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 text-[10px] text-venus-gray-400">
+      <div className="flex-1 h-1 bg-venus-gray-200 rounded-full overflow-hidden">
+        <div className="h-full bg-venus-purple/40 rounded-full transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <span>Turn {used + 1}/{total}</span>
+      {tokensUsed > 0 && <span>{(tokensUsed / 1000).toFixed(1)}k tokens</span>}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────
 
 export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups = [], onItemAdded }: ChatPanelProps) {
@@ -221,9 +369,11 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
 
   const [didYouKnow, setDidYouKnow] = useState<string | null>(null);
   const [didYouKnowLoading, setDidYouKnowLoading] = useState(false);
+  const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null);
 
   // ── Editor context ──────────────────────────────────
   const editorCtx = useEditorContext();
@@ -417,6 +567,82 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                   });
                 } else if (data.type === 'status') {
                   setStatusMessage(data.content);
+                } else if (data.type === 'thought') {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      const steps = [...(last.agentSteps || [])];
+                      // Append to existing thought step or create new one
+                      const lastStep = steps[steps.length - 1];
+                      if (lastStep?.type === 'thought') {
+                        steps[steps.length - 1] = { ...lastStep, content: lastStep.content + data.content };
+                      } else {
+                        steps.push({ type: 'thought', content: data.content, turn: data.turn });
+                      }
+                      updated[updated.length - 1] = { ...last, agentSteps: steps };
+                    }
+                    return updated;
+                  });
+                } else if (data.type === 'action') {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      const steps = [...(last.agentSteps || [])];
+                      steps.push({ type: 'action', content: data.input, tool: data.tool, turn: data.turn });
+                      updated[updated.length - 1] = { ...last, agentSteps: steps };
+                    }
+                    return updated;
+                  });
+                } else if (data.type === 'observation') {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      const steps = [...(last.agentSteps || [])];
+                      steps.push({
+                        type: 'observation',
+                        content: data.summary,
+                        tool: data.tool,
+                        turn: data.turn,
+                        approved: data.success,
+                      });
+                      updated[updated.length - 1] = { ...last, agentSteps: steps };
+                    }
+                    return updated;
+                  });
+                } else if (data.type === 'approval_request') {
+                  setPendingApprovalId(data.id);
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      const steps = [...(last.agentSteps || [])];
+                      steps.push({
+                        type: 'approval',
+                        content: data.description,
+                        tool: data.tool,
+                        turn: data.turn ?? 0,
+                        approvalId: data.id,
+                        preview: data.preview,
+                      });
+                      updated[updated.length - 1] = { ...last, agentSteps: steps };
+                    }
+                    return updated;
+                  });
+                } else if (data.type === 'budget') {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        turnBudget: { used: data.used, total: data.total, tokensUsed: data.tokens_used },
+                      };
+                    }
+                    return updated;
+                  });
                 } else if (data.type === 'error') {
                   setStatusMessage(null);
                   setMessages(prev => {
@@ -558,6 +784,48 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
     applyProposal?.(text);
   }, [applyProposal]);
 
+  // ── Approval handler ─────────────────────────────
+  const handleApproval = useCallback(async (approvalId: string, approved: boolean) => {
+    try {
+      await fetch('/api/chat/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approval_id: approvalId, approved }),
+      });
+      // Update the step's approved status in the message
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === 'assistant' && last.agentSteps) {
+          const steps = [...last.agentSteps];
+          const stepIdx = steps.findIndex(s => s.approvalId === approvalId);
+          if (stepIdx !== -1) {
+            steps[stepIdx] = { ...steps[stepIdx], approved };
+            updated[updated.length - 1] = { ...last, agentSteps: steps };
+          }
+        }
+        return updated;
+      });
+      setPendingApprovalId(null);
+    } catch { /* silently fail */ }
+  }, []);
+
+  // Keyboard shortcuts for approval (Enter = approve, Esc = reject)
+  useEffect(() => {
+    if (!pendingApprovalId) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleApproval(pendingApprovalId, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleApproval(pendingApprovalId, false);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [pendingApprovalId, handleApproval]);
+
   const suggestedPrompts = selectedText
     ? [
         `Improve the clarity of this text`,
@@ -589,6 +857,13 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
         sessions={sessions}
       />
 
+      {/* Skills Panel */}
+      <SkillsPanel
+        sparkId={sparkId}
+        isOpen={isSkillsOpen}
+        onClose={() => setIsSkillsOpen(false)}
+      />
+
       {/* Session toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-venus-gray-200 bg-venus-gray-50 shrink-0">
         <button
@@ -609,6 +884,13 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
         >
           <Plus size={14} />
           New Chat
+        </button>
+        <button
+          onClick={() => setIsSkillsOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-venus-gray-600 hover:text-venus-purple hover:bg-venus-purple-light rounded-md transition-colors"
+        >
+          <Zap size={14} />
+          Skills
         </button>
         {/* Document context indicator */}
         {hasDocContent && !selectedText && (
@@ -748,6 +1030,42 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                           query={msg.userQuery}
                           isProcessing={isStreamingThisMsg}
                         />
+                      </div>
+                    )}
+                    {/* Agent steps */}
+                    {msg.agentSteps && msg.agentSteps.length > 0 && (
+                      <div className="px-4 pt-3 pb-1 border-b border-venus-gray-200">
+                        {msg.agentSteps.map((step, si) => {
+                          switch (step.type) {
+                            case 'thought':
+                              return <ThoughtBubble key={si} content={step.content} />;
+                            case 'action':
+                              return <ActionCard key={si} tool={step.tool || ''} input={step.content} />;
+                            case 'observation':
+                              return <ObservationCard key={si} tool={step.tool || ''} summary={step.content} success={step.approved !== false} />;
+                            case 'approval':
+                              return (
+                                <ApprovalCard
+                                  key={si}
+                                  tool={step.tool || ''}
+                                  description={step.content}
+                                  preview={step.preview}
+                                  approvalId={step.approvalId || ''}
+                                  approved={step.approved}
+                                  onApprove={handleApproval}
+                                />
+                              );
+                            default:
+                              return null;
+                          }
+                        })}
+                        {msg.turnBudget && isStreamingThisMsg && (
+                          <TurnBudgetIndicator
+                            used={msg.turnBudget.used}
+                            total={msg.turnBudget.total}
+                            tokensUsed={msg.turnBudget.tokensUsed}
+                          />
+                        )}
                       </div>
                     )}
                     {/* Content */}

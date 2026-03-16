@@ -8,6 +8,28 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export type ArtifactType = 'cms_entry' | 'campaign_brief' | 'custom';
 export type ArtifactStatus = 'draft' | 'published' | 'archived';
 
+// ============================================
+// Skills types
+// ============================================
+
+export interface SkillResource {
+  name: string;
+  content: string;
+}
+
+export interface Skill {
+  id: string;
+  spark_id: string | null;
+  name: string;
+  description: string;
+  instructions: string;
+  resources: SkillResource[];
+  tool_scope: string[] | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Spark {
   id: string;
   name: string;
