@@ -28,7 +28,7 @@ A server-side singleton (`LyticsDataService`) that caches Lytics data in memory,
 
 | Slice | Lytics Endpoint | Refresh Strategy | Purpose |
 |---|---|---|---|
-| Segments | `GET /v2/segment` + `GET /api/segment/sizes` | On load + Analyze | All audience definitions with profile counts |
+| Segments | `GET /v2/segment?sizes=true` | On load + Analyze | All audience definitions with profile counts (sizes=true includes `size` field on each segment) |
 | Segment groups | `GET /v2/segment/group` | On load | Categories for organizing audiences |
 | Content opportunity | `GET /v2/content/opportunity` | On load + Analyze | ~800 topics with behavioral scores, engagement segments, look-alike models, content prevalence |
 | Content topics (editor-specific) | `POST /v2/content/enrich` | On editor change (debounced 2s, min 50-char change threshold) + Analyze | Topic classification of current draft. Text truncated to 4,000 chars (reduced from existing 5,000 to match Lytics API limit). |
@@ -214,11 +214,10 @@ YOUR THREE TASKS:
 
 | Method | Endpoint | Used For |
 |---|---|---|
-| `GET /v2/segment` | List all segments with metadata (name, slug, description, kind, tags, groups, SegmentQL). Params: `table`, `valid`, `kind`. |
+| `GET /v2/segment` | List all segments with metadata (name, slug, description, kind, tags, groups, SegmentQL). Params: `table`, `valid`, `kind`, `sizes=true` (includes profile count on each segment). |
 | `GET /v2/segment/{slugOrId}` | Get single segment. Param: `sizes=true` for profile count. |
-| `GET /api/segment/sizes` | Bulk profile counts. Params: `table`, `ids` (comma-separated). |
 | `GET /v2/segment/group` | List segment groups for categorization/filtering. |
-| `GET /api/segment/{id}/scan` | Enumerate profiles in a segment (paginated). Returns profile fields including topic affinities. Used for aggregate profile insights sampling. Params: `limit`, `start` (cursor). |
+| `GET /api/segment/{id}/scan` | **(v1 only — no v2 equivalent exists.)** Enumerate profiles in a segment (paginated). Returns profile fields including topic affinities. Used for aggregate profile insights sampling. Params: `limit`, `start` (cursor). |
 
 ### Supporting APIs
 
@@ -315,7 +314,7 @@ interface LyticsContentEntity {
 
 | File | Changes |
 |---|---|
-| `src/lib/lytics/api.ts` | Fix broken endpoints (`/api/content/classify` → `/v2/content/enrich`, `/api/content/topics` → `/v2/content/align`, `/api/content/topics` → `/v2/content/opportunity`). Add new methods: `getSegments()`, `getSegmentSizes()`, `getSegmentGroups()`, `getOpportunity()`, `scanSegment()`, `getContentByUrl()`. Rename existing `classifyContent()` → `enrichContent()`, `getAudienceAlignment()` → `alignContent()`. Keep `Authorization` header auth (verified working). |
+| `src/lib/lytics/api.ts` | Fix broken endpoints (`/api/content/classify` → `/v2/content/enrich`, `/api/content/topics` → `/v2/content/align`, `/api/content/topics` → `/v2/content/opportunity`). Add new methods: `getSegments(sizes?: boolean)`, `getSegmentGroups()`, `getOpportunity()`, `scanSegment()`, `getContentByUrl()`. Rename existing `classifyContent()` → `enrichContent()`, `getAudienceAlignment()` → `alignContent()`. Keep `Authorization` header auth (verified working). |
 | `src/app/api/lytics/analyze/route.ts` | Enhanced: full Lytics refresh + Claude AI analysis with Lytics context injection + Spark vector search. New response shape replaces the current flat `{ topics, audiences, opportunities, overallRelevance }`. Falls back to AI-only when `LYTICS_ACCESS_TOKEN` is missing. |
 | `src/components/ScorePanel.tsx` | Three-layer UI: always-on Lytics data (Layer 1), full analysis results (Layer 2). Switch from calling `/api/scoring/analyze` to `/api/lytics/analyze`. Audience `size` changes from `string` to `number` (format for display in UI). New sections for behavioral profile, opportunity, recommendations. |
 | `src/lib/agent/tools-registry.ts` | Remove `lytics_classify`, `lytics_get_audiences`, `lytics_get_opportunities` tools and their handlers. Add `lytics_insights` tool with `query_type` discriminator that reads from `LyticsDataService`. |
