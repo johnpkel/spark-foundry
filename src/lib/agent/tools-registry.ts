@@ -6,7 +6,7 @@
  * - Contentstack: cs_list_content_types, cs_get_content_type_schema, cs_search_entries, cs_get_entry,
  *                 cs_get_entry_references, cs_list_environments, cs_list_languages, cs_list_entries,
  *                 cs_create_entry, cs_update_entry, cs_delete_entry, cs_publish_entry
- * - Lytics: lytics_classify, lytics_get_audiences, lytics_get_opportunities
+ * - Lytics: lytics_insights
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -21,9 +21,8 @@ import {
   getEntry, searchEntries, createEntry, updateEntry, deleteEntry,
   publishEntry, getEntryReferences, listEnvironments, listLanguages,
 } from '@/lib/contentstack/management';
-import {
-  enrichContent, alignContent, getOpportunity,
-} from '@/lib/lytics/api';
+import { getData, enrichEditorContent, isAvailable } from '@/lib/lytics/data-service';
+import { computeOpportunityScore, getDimension } from '@/lib/lytics/types';
 
 // ─── Risk classification ────────────────────────
 
@@ -52,9 +51,7 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   cs_delete_entry: 'destructive',
   cs_publish_entry: 'write',
   // Lytics tools
-  lytics_classify: 'read',
-  lytics_get_audiences: 'read',
-  lytics_get_opportunities: 'read',
+  lytics_insights: 'read',
   // Skill tools
   use_skill: 'read',
   get_skill_resource: 'read',
@@ -94,9 +91,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cs_update_entry: 'Updating CMS entry...',
   cs_delete_entry: 'Deleting CMS entry...',
   cs_publish_entry: 'Publishing CMS entry...',
-  lytics_classify: 'Classifying content...',
-  lytics_get_audiences: 'Finding audiences...',
-  lytics_get_opportunities: 'Loading opportunities...',
+  lytics_insights: 'Querying Lytics data...',
   use_skill: 'Loading skill instructions...',
   get_skill_resource: 'Loading skill resource...',
   draft_skill: 'Drafting skill...',
@@ -371,37 +366,32 @@ const CS_TOOLS: Anthropic.Tool[] = [
 
 const LYTICS_TOOLS: Anthropic.Tool[] = [
   {
-    name: 'lytics_classify',
-    description: 'Classify text content into topics using Lytics Content Affinity API.',
+    name: 'lytics_insights',
+    description: 'Get Lytics audience and content intelligence data. Use to answer questions about audiences, content performance, topic opportunities, and audience behavioral profiles. Returns real data from Lytics CDP.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        text: { type: 'string', description: 'The text content to classify' },
-      },
-      required: ['text'],
-    },
-  },
-  {
-    name: 'lytics_get_audiences',
-    description: 'Get audience alignment scores for a set of topics.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        topics: {
-          type: 'object',
-          description: 'Map of topic slugs to confidence scores (0-1)',
+        query_type: {
+          type: 'string',
+          enum: ['segments', 'opportunity', 'content_alignment', 'profile_affinities'],
+          description: 'What data to retrieve: segments (audience list with sizes), opportunity (topic landscape with behavioral scores), content_alignment (classify text and find matching audiences), profile_affinities (cached audience topic interests)',
+        },
+        topic_filter: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional: filter opportunity data by topic names',
+        },
+        segment_filter: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional: filter segments by name',
+        },
+        text: {
+          type: 'string',
+          description: 'For content_alignment: the text to classify and align',
         },
       },
-      required: ['topics'],
-    },
-  },
-  {
-    name: 'lytics_get_opportunities',
-    description: 'Get content opportunity data showing gaps and potential across topics.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
+      required: ['query_type'],
     },
   },
 ];
@@ -575,8 +565,8 @@ export function summarizeToolInput(name: string, input: Record<string, unknown>)
       return `Deleting ${input.content_type_uid}/${input.entry_uid}`;
     case 'cs_publish_entry':
       return `Publishing to ${(input.environments as string[])?.join(', ')}`;
-    case 'lytics_classify':
-      return `${(input.text as string)?.substring(0, 60)}...`;
+    case 'lytics_insights':
+      return `${input.query_type}${input.text ? ': ' + (input.text as string).substring(0, 40) + '...' : ''}`;
     case 'use_skill':
       return `skill: ${input.skill_id}`;
     case 'get_skill_resource':
@@ -939,19 +929,68 @@ export async function executeTool(
     }
 
     // ── Lytics tools ────────────────
-    case 'lytics_classify': {
-      const result = await enrichContent(input.text as string);
-      return JSON.stringify(result, null, 2);
-    }
+    case 'lytics_insights': {
+      if (!isAvailable()) {
+        return JSON.stringify({ error: 'Lytics is not configured (LYTICS_ACCESS_TOKEN missing)' });
+      }
 
-    case 'lytics_get_audiences': {
-      const result = await alignContent(input.topics as Record<string, number>);
-      return JSON.stringify({ audiences: result }, null, 2);
-    }
+      const queryType = input.query_type as string;
+      const data = getData();
 
-    case 'lytics_get_opportunities': {
-      const result = await getOpportunity();
-      return JSON.stringify({ opportunities: result }, null, 2);
+      switch (queryType) {
+        case 'segments': {
+          let segments = data.segments;
+          const filter = input.segment_filter as string[] | undefined;
+          if (filter?.length) {
+            const lowerFilter = filter.map((f) => f.toLowerCase());
+            segments = segments.filter((s) => lowerFilter.some((f) => s.name.toLowerCase().includes(f)));
+          }
+          return JSON.stringify({
+            segments: segments.map((s) => ({ name: s.name, slug: s.slug_name, size: s.size ?? 0, description: s.description, kind: s.kind })),
+            total: segments.length,
+          }, null, 2);
+        }
+
+        case 'opportunity': {
+          let topics = data.opportunity.filter((t) => getDimension(t, 'User Count') > 0);
+          const filter = input.topic_filter as string[] | undefined;
+          if (filter?.length) {
+            const lowerFilter = filter.map((f) => f.toLowerCase());
+            topics = topics.filter((t) => lowerFilter.some((f) => t.topic.toLowerCase().includes(f)));
+          }
+          const maxUsers = Math.max(...topics.map((t) => getDimension(t, 'User Count')), 1);
+          const maxDocs = Math.max(...topics.map((t) => getDimension(t, 'Document Count')), 1);
+          return JSON.stringify({
+            topics: topics.slice(0, 50).map((t) => ({
+              topic: t.topic,
+              userCount: getDimension(t, 'User Count'),
+              docCount: getDimension(t, 'Document Count'),
+              opportunityScore: computeOpportunityScore(t, maxUsers, maxDocs),
+              deeplyEngaged: Math.round(getDimension(t, 'deeply_engaged_users') * 100),
+              atRisk: Math.round(getDimension(t, 'at_risk_users') * 100),
+              scoreRecency: Math.round(getDimension(t, 'score_recency')),
+              scoreIntensity: Math.round(getDimension(t, 'score_intensity')),
+            })),
+          }, null, 2);
+        }
+
+        case 'content_alignment': {
+          const text = input.text as string;
+          if (!text) return JSON.stringify({ error: 'text is required for content_alignment' });
+          const result = await enrichEditorContent(text);
+          return JSON.stringify(result, null, 2);
+        }
+
+        case 'profile_affinities': {
+          return JSON.stringify({
+            contentTopics: data.contentTopics,
+            contentAudiences: data.contentAudiences,
+          }, null, 2);
+        }
+
+        default:
+          return JSON.stringify({ error: `Unknown query_type: ${queryType}` });
+      }
     }
 
     default:
