@@ -314,6 +314,12 @@ function LockedSection({
   );
 }
 
+function formatProfileCount(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+}
+
 /* ── Main Component ─────────────────────────── */
 
 const MOCK_DEBOUNCE_MS = 500;
@@ -325,6 +331,17 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Lytics ambient data state
+  const [lyticsAvailable, setLyticsAvailable] = useState(false);
+  const [lyticsTopics, setLyticsTopics] = useState<{ name: string; score: number }[]>([]);
+  const [lyticsInferredTopics, setLyticsInferredTopics] = useState<{ name: string; score: number }[]>([]);
+  const [lyticsAudiences, setLyticsAudiences] = useState<{ name: string; alignment: number; size: number }[]>([]);
+  const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>([]);
+  const [isEnriching, setIsEnriching] = useState(false);
+
+  const enrichDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const lastEnrichedTextRef = useRef('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const abortRef = useRef<AbortController>(null);
@@ -442,6 +459,80 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
     };
   }, [editorCtx, updateMockScores]);
 
+  // Fetch cached Lytics data on mount
+  useEffect(() => {
+    fetch('/api/lytics/data')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.available) {
+          setLyticsAvailable(true);
+          if (data.opportunity?.length) {
+            const topics = data.opportunity
+              .filter((t: Record<string, unknown>) => {
+                const users = (t.dimensions as { label: string; value: number }[])?.find((d) => d.label === 'User Count')?.value ?? 0;
+                return users > 0;
+              })
+              .map((t: Record<string, unknown>) => {
+                const dims = t.dimensions as { label: string; value: number }[];
+                const users = dims?.find((d) => d.label === 'User Count')?.value ?? 0;
+                const docs = dims?.find((d) => d.label === 'Document Count')?.value ?? 0;
+                return { topic: t.topic as string, userCount: users, docCount: docs, opportunityScore: 0 };
+              });
+            const maxUsers = Math.max(...topics.map((t: { userCount: number }) => t.userCount), 1);
+            const maxDocs = Math.max(...topics.map((t: { docCount: number }) => t.docCount), 1);
+            for (const t of topics) {
+              t.opportunityScore = Math.round((t.userCount / maxUsers) * (1 - t.docCount / maxDocs) * 100);
+            }
+            topics.sort((a: { opportunityScore: number }, b: { opportunityScore: number }) => b.opportunityScore - a.opportunityScore);
+            setLyticsOpportunity(topics.slice(0, 20));
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Debounced Lytics enrichment on editor changes
+  useEffect(() => {
+    if (!lyticsAvailable) return;
+    const editor = editorCtx?.getEditor();
+    if (!editor) return;
+
+    const handler = () => {
+      if (enrichDebounceRef.current) clearTimeout(enrichDebounceRef.current);
+      enrichDebounceRef.current = setTimeout(() => {
+        const text = editor.getText().trim();
+        if (text.length < 10) return;
+        if (text === lastEnrichedTextRef.current) return;
+        if (Math.abs(text.length - lastEnrichedTextRef.current.length) < 50 && lastEnrichedTextRef.current) return;
+        lastEnrichedTextRef.current = text;
+
+        setIsEnriching(true);
+        fetch('/api/lytics/enrich', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.topics) setLyticsTopics(data.topics);
+            if (data.inferredTopics) setLyticsInferredTopics(data.inferredTopics);
+            if (data.audiences) setLyticsAudiences(data.audiences);
+          })
+          .catch(() => {})
+          .finally(() => setIsEnriching(false));
+      }, 2000);
+    };
+
+    editor.on('update', handler);
+    const initialText = editor.getText().trim();
+    if (initialText.length >= 10) handler();
+
+    return () => {
+      editor.off('update', handler);
+      if (enrichDebounceRef.current) clearTimeout(enrichDebounceRef.current);
+    };
+  }, [editorCtx, lyticsAvailable]);
+
   // Determine display score
   const displayScore = aiResult?.overallScore ?? mockScores?.overallScore ?? 0;
   const hasContent = !!mockScores;
@@ -519,8 +610,30 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
       )}
 
       {/* Detected Keywords / Topics */}
-      <Section icon={Compass} title={aiResult ? 'Detected Topics' : 'Detected Keywords'}>
-        {aiResult ? (
+      <Section icon={Compass} title={lyticsTopics.length > 0 ? 'Lytics Topics' : aiResult ? 'Detected Topics' : 'Detected Keywords'}>
+        {lyticsTopics.length > 0 ? (
+          <div className="space-y-2.5">
+            {lyticsTopics.slice(0, 8).map((t) => (
+              <EnhancedBar key={t.name} label={t.name} value={t.score} />
+            ))}
+            {lyticsInferredTopics.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-venus-gray-100">
+                <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-1.5">Inferred</p>
+                {lyticsInferredTopics.slice(0, 4).map((t) => (
+                  <div key={t.name} className="opacity-60">
+                    <EnhancedBar label={t.name} value={t.score} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {isEnriching && (
+              <div className="flex items-center gap-1.5 text-[10px] text-venus-gray-400">
+                <Loader2 size={10} className="animate-spin" />
+                Updating…
+              </div>
+            )}
+          </div>
+        ) : aiResult ? (
           <div className="space-y-2.5">
             {aiResult.topics.slice(0, 8).map((t) => (
               <EnhancedBar key={t.name} label={t.name} value={t.score} />
@@ -542,6 +655,69 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
           <p className="text-xs text-venus-gray-400">No keywords detected yet.</p>
         )}
       </Section>
+
+      {/* Lytics: Audience Fit (always visible when available) */}
+      {lyticsAudiences.length > 0 && (
+        <Section icon={Users} title="Audience Fit">
+          <div className="space-y-2">
+            {lyticsAudiences.slice(0, 10).map((a) => {
+              const dotSize =
+                a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
+                a.size >= 1_000 ? 'w-2 h-2' :
+                'w-1.5 h-1.5';
+
+              const alignColor =
+                a.alignment >= 80 ? 'bg-venus-green text-venus-green' :
+                a.alignment >= 60 ? 'bg-venus-yellow text-venus-yellow' :
+                'bg-venus-gray-300 text-venus-gray-500';
+
+              return (
+                <div key={a.name} className="flex items-center gap-2">
+                  <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} />
+                  <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
+                  <span className="text-[10px] text-venus-gray-400 shrink-0">{formatProfileCount(a.size)}</span>
+                  <span
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
+                  >
+                    {a.alignment}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* Lytics: Content Opportunity (always visible when available) */}
+      {lyticsOpportunity.length > 0 && lyticsTopics.length > 0 && (
+        <Section icon={BarChart3} title="Content Opportunity">
+          <div className="space-y-2">
+            {lyticsOpportunity
+              .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
+              .slice(0, 5)
+              .map((o) => (
+                <div key={o.topic} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs text-venus-gray-600 truncate">{o.topic}</span>
+                      <span className="text-[10px] text-venus-gray-400 shrink-0 ml-1">{o.opportunityScore}%</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-venus-gray-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-venus-purple transition-all duration-500"
+                        style={{ width: `${o.opportunityScore}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[9px] text-venus-gray-400 shrink-0 text-right leading-tight">
+                    <div>{o.userCount.toLocaleString()} users</div>
+                    <div>{o.docCount} docs</div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Section>
+      )}
 
       {/* AI: Content Quality */}
       {aiResult ? (
