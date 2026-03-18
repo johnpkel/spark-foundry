@@ -17,6 +17,20 @@ export interface SkillResource {
   content: string;
 }
 
+export interface SkillVariable {
+  key: string;
+  label: string;
+  default_value: string;
+  description?: string;
+}
+
+export interface SkillDraft {
+  name: string;
+  description: string;
+  instructions: string;
+  variables?: SkillVariable[];
+}
+
 export interface Skill {
   id: string;
   spark_id: string | null;
@@ -24,6 +38,7 @@ export interface Skill {
   description: string;
   instructions: string;
   resources: SkillResource[];
+  variables: SkillVariable[];
   tool_scope: string[] | null;
   is_active: boolean;
   created_at: string;

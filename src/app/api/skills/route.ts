@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 // POST /api/skills — create a new skill
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { spark_id, name, description, instructions, resources, tool_scope } = body;
+  const { spark_id, name, description, instructions, resources, tool_scope, variables } = body;
 
   if (!name || !description || !instructions) {
     return NextResponse.json(
@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
       description,
       instructions,
       resources: resources || [],
+      variables: variables || [],
       tool_scope: tool_scope || null,
     })
     .select()

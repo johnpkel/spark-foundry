@@ -29,7 +29,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   // Only allow updating specific fields
   const allowed: Record<string, unknown> = {};
-  for (const key of ['name', 'description', 'instructions', 'resources', 'tool_scope', 'is_active']) {
+  for (const key of ['name', 'description', 'instructions', 'resources', 'variables', 'tool_scope', 'is_active']) {
     if (key in body) allowed[key] = body[key];
   }
 

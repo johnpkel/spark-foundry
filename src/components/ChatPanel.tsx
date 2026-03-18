@@ -14,7 +14,7 @@ import type { MentionOption } from './ChatMentionDropdown';
 import DropOverlay from './DropOverlay';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useEditorContext } from '@/lib/editor-context';
-import type { ChatSession, VectorContextItem, SparkItem, CanvasGroup } from '@/lib/types';
+import type { ChatSession, VectorContextItem, SparkItem, CanvasGroup, SkillDraft } from '@/lib/types';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ interface AgentStep {
   type: 'thought' | 'action' | 'observation' | 'approval';
   content: string;
   tool?: string;
+  skillName?: string;
   turn: number;
   approvalId?: string;
   approved?: boolean;
@@ -256,6 +257,16 @@ function ActionCard({ tool, input, isActive }: { tool: string; input: string; is
   );
 }
 
+function SkillActivationCard({ skillName }: { skillName: string }) {
+  return (
+    <div className="my-1.5 flex items-center gap-2 px-3 py-2 rounded-lg bg-venus-purple/10 border border-venus-purple/30 text-xs ring-1 ring-venus-purple/20">
+      <Zap size={12} className="text-venus-purple shrink-0" />
+      <span className="font-semibold text-venus-purple">{skillName}</span>
+      <span className="text-venus-purple/60 ml-auto text-[10px]">Skill activated</span>
+    </div>
+  );
+}
+
 function ObservationCard({ tool, summary, success }: { tool: string; summary: string; success: boolean }) {
   return (
     <div className={`my-1.5 flex items-start gap-2 px-3 py-2 rounded-lg text-xs ${
@@ -389,6 +400,7 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSkillsOpen, setIsSkillsOpen] = useState(false);
 
+  const [skillDraft, setSkillDraft] = useState<SkillDraft | null>(null);
   const [didYouKnow, setDidYouKnow] = useState<string | null>(null);
   const [didYouKnowLoading, setDidYouKnowLoading] = useState(false);
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null);
@@ -610,7 +622,7 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                     const last = updated[updated.length - 1];
                     if (last?.role === 'assistant') {
                       const steps = [...(last.agentSteps || [])];
-                      steps.push({ type: 'action', content: data.input, tool: data.tool, turn: data.turn });
+                      steps.push({ type: 'action', content: data.input, tool: data.tool, skillName: data.skill_name, turn: data.turn });
                       updated[updated.length - 1] = { ...last, agentSteps: steps };
                     }
                     return updated;
@@ -666,6 +678,14 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                         break;
                     }
                   }
+                } else if (data.type === 'skill_draft') {
+                  setSkillDraft({
+                    name: data.name,
+                    description: data.description,
+                    instructions: data.instructions,
+                    variables: data.variables,
+                  });
+                  setIsSkillsOpen(true);
                 } else if (data.type === 'budget') {
                   setMessages(prev => {
                     const updated = [...prev];
@@ -897,6 +917,8 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
         sparkId={sparkId}
         isOpen={isSkillsOpen}
         onClose={() => setIsSkillsOpen(false)}
+        skillDraft={skillDraft}
+        onDraftConsumed={() => setSkillDraft(null)}
       />
 
       {/* Session toolbar */}
@@ -1075,8 +1097,12 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                             case 'thought':
                               return <ThoughtBubble key={si} content={step.content} />;
                             case 'action':
+                              if (step.tool === 'use_skill') {
+                                return <SkillActivationCard key={si} skillName={step.skillName || step.content} />;
+                              }
                               return <ActionCard key={si} tool={step.tool || ''} input={step.content} />;
                             case 'observation':
+                              if (step.tool === 'use_skill') return null;
                               return <ObservationCard key={si} tool={step.tool || ''} summary={step.content} success={step.approved !== false} />;
                             case 'approval':
                               return (

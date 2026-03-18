@@ -14,6 +14,8 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { generateQueryEmbedding, generateEmbedding } from '@/lib/embeddings';
 import { scrapePage } from '@/lib/scraper';
 import { addLogEntry } from '@/lib/activity-logger';
+import { interpolateVariables } from '@/lib/agent/skill-variables';
+import type { SkillVariable } from '@/lib/types';
 import {
   listContentTypes, getContentTypeSchema, listEntries,
   getEntry, searchEntries, createEntry, updateEntry, deleteEntry,
@@ -56,6 +58,7 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   // Skill tools
   use_skill: 'read',
   get_skill_resource: 'read',
+  draft_skill: 'read',
   // Editor tools
   update_editor: 'write',
 };
@@ -96,6 +99,7 @@ export const TOOL_LABELS: Record<string, string> = {
   lytics_get_opportunities: 'Loading opportunities...',
   use_skill: 'Loading skill instructions...',
   get_skill_resource: 'Loading skill resource...',
+  draft_skill: 'Drafting skill...',
   update_editor: 'Updating document...',
 };
 
@@ -410,6 +414,7 @@ const SKILL_TOOLS: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {
         skill_id: { type: 'string', description: 'The skill UUID from the Available Skills list' },
+        spark_id: { type: 'string', description: 'The current Spark ID (for variable overrides)' },
       },
       required: ['skill_id'],
     },
@@ -424,6 +429,33 @@ const SKILL_TOOLS: Anthropic.Tool[] = [
         resource_name: { type: 'string', description: 'The resource file name to load' },
       },
       required: ['skill_id', 'resource_name'],
+    },
+  },
+  {
+    name: 'draft_skill',
+    description: 'Draft a new reusable skill from the current conversation. Use when the user says "save this as a skill", "make this a skill", or wants to save a workflow for reuse. The draft will be sent to the Skills panel for the user to review and save.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'kebab-case skill name' },
+        description: { type: 'string', description: 'What it does + when to trigger (max 1024 chars)' },
+        instructions: { type: 'string', description: 'Full step-by-step instructions in markdown' },
+        variables: {
+          type: 'array',
+          description: 'Optional variables that can be customized per-Spark',
+          items: {
+            type: 'object',
+            properties: {
+              key: { type: 'string' },
+              label: { type: 'string' },
+              default_value: { type: 'string' },
+              description: { type: 'string' },
+            },
+            required: ['key', 'label', 'default_value'],
+          },
+        },
+      },
+      required: ['name', 'description', 'instructions'],
     },
   },
 ];
@@ -549,6 +581,8 @@ export function summarizeToolInput(name: string, input: Record<string, unknown>)
       return `skill: ${input.skill_id}`;
     case 'get_skill_resource':
       return `resource: ${input.resource_name}`;
+    case 'draft_skill':
+      return `skill: "${input.name}"`;
     case 'update_editor':
       return `${input.mode}: ${input.description || 'Update document'}`;
     default:
@@ -842,9 +876,10 @@ export async function executeTool(
     // ── Skill tools ────────────────
     case 'use_skill': {
       const skillId = input.skill_id as string;
+      const sparkId = input.spark_id as string | undefined;
       const { data: skill, error: skillError } = await supabaseAdmin
         .from('skills')
-        .select('name, instructions, resources')
+        .select('name, instructions, resources, variables')
         .eq('id', skillId)
         .single();
 
@@ -852,12 +887,31 @@ export async function executeTool(
         return JSON.stringify({ error: 'Skill not found' });
       }
 
+      // Interpolate variables with per-Spark overrides
+      let finalInstructions = skill.instructions as string;
+      const variables = (skill.variables as SkillVariable[]) || [];
+      if (variables.length > 0) {
+        let overrides: Record<string, string> = {};
+        if (sparkId) {
+          const { data: overrideRow } = await supabaseAdmin
+            .from('skill_variable_overrides')
+            .select('overrides')
+            .eq('skill_id', skillId)
+            .eq('spark_id', sparkId)
+            .maybeSingle();
+          if (overrideRow?.overrides) {
+            overrides = overrideRow.overrides as Record<string, string>;
+          }
+        }
+        finalInstructions = interpolateVariables(finalInstructions, variables, overrides);
+      }
+
       const resourceList = (skill.resources as Array<{ name: string }>) || [];
       const resourceNames = resourceList.map((r) => r.name);
 
       return JSON.stringify({
         skill: skill.name,
-        instructions: skill.instructions,
+        instructions: finalInstructions,
         available_resources: resourceNames.length > 0 ? resourceNames : undefined,
       }, null, 2);
     }

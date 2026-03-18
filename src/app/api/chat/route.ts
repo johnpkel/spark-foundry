@@ -47,7 +47,10 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 Aim for 100-200 words. Only exceed this for full artifacts (campaign briefs, CMS entries). No bullet lists longer than 5 items. No introductory sentences — start with the substance.
 
 ## Ending every response
-End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.${CMS_SYSTEM_PROMPT}`;
+End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.
+
+## Creating Skills
+When a user asks to "save this as a skill", "turn this into a skill", or wants to save a workflow for reuse, use the draft_skill tool. Distill the conversation into clean, reusable instructions with clear trigger phrases in the description. Extract context-dependent values as {{variables}} with sensible defaults.${CMS_SYSTEM_PROMPT}`;
 
 const MAX_IMAGES_PER_RESULT = 5;
 
@@ -539,7 +542,7 @@ export async function POST(request: NextRequest) {
 
         if (editor_content && typeof editor_content === 'string' && editor_content.trim().length > 10) {
           const truncated = editor_content.slice(0, 8000);
-          editorContextSection += `\n\n---\n## Active Spark Document\nThe user is editing a document in the Spark Editor. The current document content is below. You can reference it, answer questions about it, and suggest edits.\n\n${truncated}`;
+          editorContextSection += `\n\n---\n## Active Spark Document\nThe user is editing a document in the Spark Editor. The current document content is shown below **in Markdown format** — headings, bold, italics, task lists (\`- [x]\` / \`- [ ]\`), bullet lists, and other formatting are preserved. When producing content for the editor, reproduce this formatting accurately (e.g. use \`- [x]\` for checked tasks, not plain bullets). Lines like \`<!-- group: ... -->\` and \`<!-- drawing -->\` are special embedded blocks — preserve them in place and do not modify them.\n\n${truncated}`;
           if (editor_content.length > 8000) {
             editorContextSection += '\n\n*(Document truncated — showing first 8,000 characters)*';
           }
@@ -560,7 +563,7 @@ Mode selection:
 - **integrate**: "integrate this into the document", "rewrite to include", "merge into". You MUST produce the COMPLETE final document. Read existing content carefully and produce an elevated, cohesive result.
 - **insert_after**: "add after the introduction", "insert after [heading]". Set target_heading to the heading text.
 
-Content format: Well-formatted Markdown. Do NOT use this tool when the user just asks a question about the document or when they have selected text (use \`\`\`proposal\`\`\` blocks for selected text edits).`;
+Content format: Well-formatted Markdown. Preserve formatting from the existing document — use \`- [x]\` / \`- [ ]\` for task lists, \`#\` for headings, \`**bold**\`, etc. Keep \`<!-- group: ... -->\` and \`<!-- drawing -->\` markers in place when using integrate mode. Do NOT use this tool when the user just asks a question about the document or when they have selected text (use \`\`\`proposal\`\`\` blocks for selected text edits).`;
         }
 
         // ── Skills metadata (progressive disclosure: Level 1) ───
@@ -705,6 +708,9 @@ Content format: Well-formatted Markdown. Do NOT use this tool when the user just
               type: 'action',
               tool: toolName,
               input: summarizeToolInput(toolName, toolInput),
+              skill_name: toolName === 'use_skill'
+                ? activeSkills?.find((s: { id: string; name: string }) => s.id === toolInput.skill_id)?.name
+                : undefined,
               turn,
             });
             send({ type: 'status', content: TOOL_LABELS[toolName] || 'Processing...' });
@@ -746,6 +752,24 @@ Content format: Well-formatted Markdown. Do NOT use this tool when the user just
                 });
                 continue;
               }
+            }
+
+            // ── Client-side draft_skill tool: send SSE event instead of executing ──
+            if (toolName === 'draft_skill') {
+              send({
+                type: 'skill_draft',
+                name: toolInput.name,
+                description: toolInput.description,
+                instructions: toolInput.instructions,
+                variables: toolInput.variables || [],
+              });
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: JSON.stringify({ success: true, message: 'Skill draft sent to Skills panel for review. The user can edit and save it.' }),
+              });
+              send({ type: 'observation', tool: toolName, summary: 'Skill draft sent to panel', success: true, turn });
+              continue;
             }
 
             // ── Client-side editor tool: send SSE event instead of executing ──
