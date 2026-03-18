@@ -22,7 +22,7 @@ import {
   publishEntry, getEntryReferences, listEnvironments, listLanguages,
 } from '@/lib/contentstack/management';
 import {
-  classifyContent, getAudienceAlignment, getOpportunities,
+  enrichContent, alignContent, getOpportunity,
 } from '@/lib/lytics/api';
 
 // ─── Risk classification ────────────────────────
@@ -940,17 +940,17 @@ export async function executeTool(
 
     // ── Lytics tools ────────────────
     case 'lytics_classify': {
-      const result = await classifyContent(input.text as string);
+      const result = await enrichContent(input.text as string);
       return JSON.stringify(result, null, 2);
     }
 
     case 'lytics_get_audiences': {
-      const result = await getAudienceAlignment(input.topics as Record<string, number>);
+      const result = await alignContent(input.topics as Record<string, number>);
       return JSON.stringify({ audiences: result }, null, 2);
     }
 
     case 'lytics_get_opportunities': {
-      const result = await getOpportunities();
+      const result = await getOpportunity();
       return JSON.stringify({ opportunities: result }, null, 2);
     }
 

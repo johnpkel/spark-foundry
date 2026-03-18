@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import {
-  classifyContent,
-  getAudienceAlignment,
-  getOpportunities,
+  enrichContent,
+  alignContent,
+  getOpportunity,
 } from '@/lib/lytics/api';
 import type { OpportunityTopic } from '@/lib/lytics/api';
 
@@ -41,8 +41,8 @@ export async function POST(req: Request) {
       combinedText = combinedText.slice(0, MAX_TEXT_LENGTH);
     }
 
-    // 2. Classify the combined text → topics
-    const classification = await classifyContent(combinedText);
+    // 2. Enrich the combined text → topics
+    const classification = await enrichContent(combinedText);
     const allTopics = {
       ...classification.inferred_topics,
       ...classification.topics, // higher-confidence topics override inferred
@@ -56,8 +56,8 @@ export async function POST(req: Request) {
 
     if (topicEntries.length > 0) {
       const [alignments, opps] = await Promise.all([
-        getAudienceAlignment(allTopics),
-        getOpportunities(),
+        alignContent(allTopics),
+        getOpportunity(),
       ]);
 
       audiences = alignments
