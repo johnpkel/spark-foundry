@@ -35,7 +35,7 @@ interface AIAnalysisResult {
   overallScore: number;
   summary: string;
   topics: { name: string; score: number }[];
-  audiences: { name: string; alignment: number; size: string }[];
+  audiences: { name: string; alignment: number; size: number }[];
   contentQuality: {
     readability: number;
     clarity: number;
@@ -44,6 +44,27 @@ interface AIAnalysisResult {
   };
   channelFit: { channel: string; score: number }[];
   recommendations: string[];
+}
+
+interface FullAnalysisResult {
+  lytics: {
+    topics: { name: string; score: number }[];
+    audiences: { name: string; alignment: number; size: number }[];
+    opportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[];
+    aggregateAffinities: { segmentName: string; topAffinities: { topic: string; score: number }[] }[];
+    lyticsContentRecs: { url: string; title: string; lytics: Record<string, number> }[];
+  };
+  ai: {
+    contentComparison: string;
+    qualityAnalysis: AIAnalysisResult;
+    recommendations: {
+      contentUpdates: string[];
+      campaignIdeas: string[];
+      underservedAudiences: { name: string; size: number; gap: string; suggestion: string }[];
+      contentGaps: { topic: string; userCount: number; docCount: number; opportunity: string }[];
+    };
+  };
+  relatedSparkItems: { id: string; title: string; similarity: number }[];
 }
 
 interface ScorePanelProps {
@@ -331,6 +352,7 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [fullAnalysis, setFullAnalysis] = useState<FullAnalysisResult | null>(null);
 
   // Lytics ambient data state
   const [lyticsAvailable, setLyticsAvailable] = useState(false);
@@ -402,6 +424,10 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
 
     const plainText = editor.getText().trim();
     const referencedItemTexts = extractReferencedItemTexts();
+    const sparkItemUrls = itemsRef.current
+      .filter((item) => item.metadata?.url || item.type === 'link')
+      .map((item) => (item.metadata?.url as string) || item.content)
+      .filter(Boolean);
 
     if (!plainText && referencedItemTexts.length === 0) return;
 
@@ -413,10 +439,10 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/scoring/analyze', {
+      const res = await fetch('/api/lytics/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: plainText, referencedItemTexts }),
+        body: JSON.stringify({ text: plainText, referencedItemTexts, sparkItemUrls }),
         signal: controller.signal,
       });
 
@@ -425,8 +451,21 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
         throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
       }
 
-      const data: AIAnalysisResult = await res.json();
-      setAiResult(data);
+      const data = await res.json();
+
+      // Update Lytics data from the refreshed response
+      if (data.lytics) {
+        if (data.lytics.topics) setLyticsTopics(data.lytics.topics);
+        if (data.lytics.audiences) setLyticsAudiences(data.lytics.audiences);
+      }
+
+      // Set AI result from the response
+      if (data.ai?.qualityAnalysis) {
+        setAiResult(data.ai.qualityAnalysis);
+      }
+
+      // Store the full analysis result for Layer 2 sections
+      setFullAnalysis(data);
       setErrorMsg('');
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -739,8 +778,8 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
           <div className="space-y-2.5">
             {aiResult.audiences.slice(0, 6).map((a) => {
               const dotSize =
-                a.size.includes('M') ? 'w-2.5 h-2.5' :
-                a.size.includes('K') ? 'w-2 h-2' :
+                a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
+                a.size >= 1_000 ? 'w-2 h-2' :
                 'w-1.5 h-1.5';
 
               const alignColor =
@@ -752,7 +791,7 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
                 <div key={a.name} className="flex items-center gap-2">
                   <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} />
                   <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
-                  <span className="text-[10px] text-venus-gray-400 shrink-0">{a.size}</span>
+                  <span className="text-[10px] text-venus-gray-400 shrink-0">{formatProfileCount(a.size)}</span>
                   <span
                     className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
                   >
@@ -794,6 +833,94 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
         </Section>
       ) : (
         <LockedSection icon={Lightbulb} title="Recommendations" />
+      )}
+
+      {/* ── Layer 2: Full Analysis (Lytics + AI) ── */}
+
+      {/* Gap Analysis */}
+      {fullAnalysis?.ai?.contentComparison && (
+        <Section icon={Compass} title="Lytics Gap Analysis">
+          <p className="text-xs text-venus-gray-600 leading-relaxed">
+            {fullAnalysis.ai.contentComparison}
+          </p>
+        </Section>
+      )}
+
+      {/* Strategic Recommendations */}
+      {fullAnalysis?.ai?.recommendations && (
+        <Section icon={Lightbulb} title="Strategic Recommendations">
+          {fullAnalysis.ai.recommendations.contentUpdates?.length > 0 && (
+            <div className="mb-3">
+              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Updates</h5>
+              <div className="space-y-1.5">
+                {fullAnalysis.ai.recommendations.contentUpdates.map((rec: string, i: number) => (
+                  <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
+                    <span className="text-venus-purple font-bold shrink-0">{i + 1}.</span>
+                    <span className="leading-relaxed">{rec}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {fullAnalysis.ai.recommendations.campaignIdeas?.length > 0 && (
+            <div className="mb-3">
+              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Campaign Ideas</h5>
+              <div className="space-y-1.5">
+                {fullAnalysis.ai.recommendations.campaignIdeas.map((idea: string, i: number) => (
+                  <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
+                    <span className="text-venus-green font-bold shrink-0">→</span>
+                    <span className="leading-relaxed">{idea}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {fullAnalysis.ai.recommendations.underservedAudiences?.length > 0 && (
+            <div className="mb-3">
+              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Underserved Audiences</h5>
+              <div className="space-y-2">
+                {fullAnalysis.ai.recommendations.underservedAudiences.map((a: { name: string; size: number; gap: string; suggestion: string }, i: number) => (
+                  <div key={i} className="rounded-lg border border-venus-gray-200 p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-venus-gray-700">{a.name}</span>
+                      <span className="text-[10px] text-venus-gray-400">{formatProfileCount(a.size)}</span>
+                    </div>
+                    <p className="text-[10px] text-venus-gray-500 mb-0.5">{a.gap}</p>
+                    <p className="text-[10px] text-venus-purple">{a.suggestion}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {fullAnalysis.ai.recommendations.contentGaps?.length > 0 && (
+            <div>
+              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Gaps</h5>
+              <div className="space-y-1.5">
+                {fullAnalysis.ai.recommendations.contentGaps.map((g: { topic: string; userCount: number; docCount: number; opportunity: string }, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-venus-gray-600">
+                    <span className="text-venus-yellow font-bold shrink-0">!</span>
+                    <span className="truncate flex-1">{g.topic}</span>
+                    <span className="text-[10px] text-venus-gray-400 shrink-0">{g.userCount.toLocaleString()} users / {g.docCount} docs</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* Related Content from Lytics */}
+      {(fullAnalysis?.lytics?.lyticsContentRecs?.length ?? 0) > 0 && fullAnalysis && (
+        <Section icon={BookOpen} title="Related Content (Lytics)">
+          <div className="space-y-1.5">
+            {fullAnalysis.lytics.lyticsContentRecs.map((rec: { url: string; title: string }, i: number) => (
+              <a key={i} href={rec.url} target="_blank" rel="noopener noreferrer"
+                className="block text-xs text-venus-purple hover:underline truncate">
+                {rec.title || rec.url}
+              </a>
+            ))}
+          </div>
+        </Section>
       )}
     </div>
   );
