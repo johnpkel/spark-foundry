@@ -19,8 +19,13 @@ export async function GET() {
   }
 
   const refreshed = getData();
+  // Extract account ID from first segment for Lytics UI links
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const firstSeg = refreshed.segments[0] as any;
+  const aid = firstSeg?.aid ?? firstSeg?.account_id ?? '';
   return NextResponse.json({
     available: true,
+    aid,
     segments: refreshed.segments,
     segmentGroups: refreshed.segmentGroups,
     opportunity: refreshed.opportunity,

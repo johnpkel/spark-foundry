@@ -16,6 +16,8 @@ import {
   Eye,
   Sparkles,
   Search,
+  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { useEditorContext } from '@/lib/editor-context';
 import type { SparkItem, CanvasGroup } from '@/lib/types';
@@ -291,22 +293,64 @@ function QuickStats({
   );
 }
 
+function Tooltip({ text }: { text: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onClick={(e) => { e.stopPropagation(); setShow(!show); }}
+        className="p-0.5 rounded hover:bg-venus-gray-100 text-venus-gray-400 hover:text-venus-gray-600 transition-colors"
+        aria-label="Info"
+      >
+        <Info size={10} />
+      </button>
+      {show && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-50 pointer-events-none">
+          {text}
+          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-venus-gray-700" />
+        </div>
+      )}
+    </span>
+  );
+}
+
 function Section({
   icon: Icon,
   title,
+  tooltip,
+  sourceUrl,
+  sourceLabel,
   children,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   title: string;
+  tooltip?: string;
+  sourceUrl?: string;
+  sourceLabel?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="mb-5 last:mb-0">
-      <div className="flex items-center gap-2 mb-2.5">
+      <div className="flex items-center gap-1.5 mb-2.5">
         <Icon size={14} className="text-venus-purple" />
         <h4 className="text-[11px] font-semibold uppercase tracking-wider text-venus-gray-500">
           {title}
         </h4>
+        {tooltip && <Tooltip text={tooltip} />}
+        {sourceUrl && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-0.5 text-[9px] text-venus-gray-400 hover:text-venus-purple transition-colors"
+            title={sourceLabel || 'View in Lytics'}
+          >
+            <ExternalLink size={9} />
+            <span>{sourceLabel || 'Source'}</span>
+          </a>
+        )}
       </div>
       {children}
     </div>
@@ -336,6 +380,11 @@ function LockedSection({
   );
 }
 
+function lyticsUrl(aid: string, path: string): string | undefined {
+  if (!aid) return undefined;
+  return `https://app.lytics.io/a/${aid}/${path}`;
+}
+
 function formatProfileCount(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
@@ -362,6 +411,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   const [lyticsAudiences, setLyticsAudiences] = useState<{ name: string; alignment: number; size: number }[]>([]);
   const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>([]);
   const [isEnriching, setIsEnriching] = useState(false);
+  const [lyticsAid, setLyticsAid] = useState('');
 
   const enrichDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const lastEnrichedTextRef = useRef('');
@@ -506,6 +556,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       .then((data) => {
         if (data.available) {
           setLyticsAvailable(true);
+          if (data.aid) setLyticsAid(String(data.aid));
           if (data.opportunity?.length) {
             const topics = data.opportunity
               .filter((t: Record<string, unknown>) => {
@@ -650,7 +701,15 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       )}
 
       {/* Detected Keywords / Topics */}
-      <Section icon={Compass} title={lyticsTopics.length > 0 ? 'Lytics Topics' : aiResult ? 'Detected Topics' : 'Detected Keywords'}>
+      <Section
+        icon={Compass}
+        title={lyticsTopics.length > 0 ? 'Lytics Topics' : aiResult ? 'Detected Topics' : 'Detected Keywords'}
+        tooltip={lyticsTopics.length > 0
+          ? 'Topics extracted by Lytics NLP from your editor content. Scores show classification confidence. Higher scores mean the content strongly signals this topic to Lytics\u2019 audience engine.'
+          : undefined}
+        sourceUrl={lyticsTopics.length > 0 ? lyticsUrl(lyticsAid, 'content/topics') : undefined}
+        sourceLabel="Lytics"
+      >
         {lyticsTopics.length > 0 ? (
           <div className="space-y-2.5">
             {lyticsTopics.slice(0, 8).map((t) => (
@@ -698,7 +757,13 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Lytics: Audience Fit (always visible when available) */}
       {lyticsAudiences.length > 0 && (
-        <Section icon={Users} title="Audience Fit">
+        <Section
+          icon={Users}
+          title="Audience Fit"
+          tooltip="Lytics audience segments whose behavioral topic profile matches your content. Alignment % measures topic overlap between your content and each segment. Profile count shows real audience size from your CDP."
+          sourceUrl={lyticsUrl(lyticsAid, 'segments')}
+          sourceLabel="Lytics"
+        >
           <div className="space-y-2">
             {lyticsAudiences.slice(0, 10).map((a) => {
               const dotSize =
@@ -713,11 +778,12 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
               return (
                 <div key={a.name} className="flex items-center gap-2">
-                  <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} />
+                  <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} title="Relative audience size" />
                   <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
-                  <span className="text-[10px] text-venus-gray-400 shrink-0">{formatProfileCount(a.size)}</span>
+                  <span className="text-[10px] text-venus-gray-400 shrink-0" title={`${a.size.toLocaleString()} profiles in this segment`}>{formatProfileCount(a.size)}</span>
                   <span
                     className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
+                    title={`${a.alignment}% topic overlap between your content and this audience's interests`}
                   >
                     {a.alignment}%
                   </span>
@@ -730,7 +796,13 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Lytics: Content Opportunity (always visible when available) */}
       {lyticsOpportunity.length > 0 && lyticsTopics.length > 0 && (
-        <Section icon={BarChart3} title="Content Opportunity">
+        <Section
+          icon={BarChart3}
+          title="Content Opportunity"
+          tooltip="Opportunity score = high user interest + low content coverage. Topics with many interested users but few published docs represent content gaps you can fill. Users and docs are real counts from Lytics."
+          sourceUrl={lyticsUrl(lyticsAid, 'content/topics')}
+          sourceLabel="Lytics"
+        >
           <div className="space-y-2">
             {lyticsOpportunity
               .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
@@ -740,7 +812,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
                       <span className="text-xs text-venus-gray-600 truncate">{o.topic}</span>
-                      <span className="text-[10px] text-venus-gray-400 shrink-0 ml-1">{o.opportunityScore}%</span>
+                      <span className="text-[10px] text-venus-gray-400 shrink-0 ml-1" title="Opportunity score: higher = more users interested, fewer docs available">{o.opportunityScore}%</span>
                     </div>
                     <div className="w-full h-1.5 rounded-full bg-venus-gray-100 overflow-hidden">
                       <div
@@ -750,8 +822,8 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                     </div>
                   </div>
                   <div className="text-[9px] text-venus-gray-400 shrink-0 text-right leading-tight">
-                    <div>{o.userCount.toLocaleString()} users</div>
-                    <div>{o.docCount} docs</div>
+                    <div title="Number of unique users with behavioral affinity for this topic">{o.userCount.toLocaleString()} users</div>
+                    <div title="Number of published content pieces covering this topic">{o.docCount} docs</div>
                   </div>
                 </div>
               ))}
@@ -840,7 +912,11 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Gap Analysis */}
       {fullAnalysis?.ai?.contentComparison && (
-        <Section icon={Compass} title="Lytics Gap Analysis">
+        <Section
+          icon={Compass}
+          title="Lytics Gap Analysis"
+          tooltip="AI comparison of your content against real Lytics audience data. Identifies what your content covers well, what\u2019s missing, and which audience interests aren\u2019t addressed."
+        >
           <p className="text-xs text-venus-gray-600 leading-relaxed">
             {fullAnalysis.ai.contentComparison}
           </p>
@@ -849,7 +925,11 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Strategic Recommendations */}
       {fullAnalysis?.ai?.recommendations && (
-        <Section icon={Lightbulb} title="Strategic Recommendations">
+        <Section
+          icon={Lightbulb}
+          title="Strategic Recommendations"
+          tooltip="AI-generated recommendations grounded in Lytics behavioral data. Content updates improve audience alignment. Campaign ideas leverage engagement patterns. Underserved audiences and content gaps are data-driven opportunities."
+        >
           {fullAnalysis.ai.recommendations.contentUpdates?.length > 0 && (
             <div className="mb-3">
               <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Updates</h5>
@@ -912,7 +992,13 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Related Content from Lytics */}
       {(fullAnalysis?.lytics?.lyticsContentRecs?.length ?? 0) > 0 && fullAnalysis && (
-        <Section icon={BookOpen} title="Related Content (Lytics)">
+        <Section
+          icon={BookOpen}
+          title="Related Content (Lytics)"
+          tooltip="Published pages from your primary domain that Lytics has indexed and matched to similar topics. These are what your audience is already reading."
+          sourceUrl={lyticsUrl(lyticsAid, 'content')}
+          sourceLabel="Lytics"
+        >
           <div className="space-y-1.5">
             {fullAnalysis.lytics.lyticsContentRecs.map((rec: { url: string; title: string }, i: number) => (
               <a key={i} href={rec.url} target="_blank" rel="noopener noreferrer"
