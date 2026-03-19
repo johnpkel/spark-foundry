@@ -271,6 +271,42 @@ const slashCommandSuggestion = {
 
 // ─── Toolbar helpers ─────────────────────────────────
 
+function EditorStatsBar({ editor }: { editor: Editor }) {
+  const [stats, setStats] = useState({ words: 0, sentences: 0, readability: 0 });
+
+  useEffect(() => {
+    const update = () => {
+      const text = editor.getText().trim();
+      if (!text || text.length < 5) {
+        setStats({ words: 0, sentences: 0, readability: 0 });
+        return;
+      }
+      const words = text.split(/\s+/).filter(Boolean);
+      const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+      const avgWps = sentences.length > 0 ? words.length / sentences.length : words.length;
+      const readability = Math.min(100, Math.max(0, Math.round(100 - (avgWps - 12) * 3)));
+      setStats({ words: words.length, sentences: sentences.length, readability });
+    };
+    editor.on('update', update);
+    update();
+    return () => { editor.off('update', update); };
+  }, [editor]);
+
+  if (stats.words === 0) return null;
+
+  return (
+    <div className="shrink-0 flex items-center gap-3 px-3 py-1 border-b border-venus-gray-100 bg-surface text-[10px] text-venus-gray-400 tabular-nums">
+      <span title="Total word count">{stats.words.toLocaleString()} words</span>
+      <span className="text-venus-gray-200">|</span>
+      <span title="Number of sentences detected">{stats.sentences.toLocaleString()} sentences</span>
+      <span className="text-venus-gray-200">|</span>
+      <span title="Readability score (0–100) based on average words per sentence. ~12 words/sentence = 100.">
+        readability {stats.readability}
+      </span>
+    </div>
+  );
+}
+
 function ToolbarBtn({
   icon: Icon, label, onClick, active, disabled,
 }: {
@@ -684,6 +720,9 @@ export default function SparkEditor({
         {/* Rule */}
         <ToolbarBtn icon={Minus} label="Horizontal rule" onClick={() => e.chain().focus().setHorizontalRule().run()} />
       </div>
+
+      {/* ── Editor stats bar ── */}
+      <EditorStatsBar editor={e} />
 
       {/* ── Bubble menu (appears on text selection) ── */}
       <BubbleMenu

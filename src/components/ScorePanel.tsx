@@ -687,25 +687,15 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       )}
 
       {/* Ring Chart */}
-      <div className="flex justify-center mb-5 relative">
-        <div title={aiResult
-          ? 'Content Score: AI-assessed overall quality combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze.'
-          : 'Content Score: estimated from word count, sentence structure, and content substance. Click Analyze for a full AI assessment.'
-        }>
-          <RingChart score={displayScore} />
-        </div>
+      <div className="flex items-center justify-center gap-2 mb-5">
+        <RingChart score={displayScore} />
+        <Tooltip text={aiResult
+          ? 'AI-assessed content quality score (0\u2013100) combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze.'
+          : 'Estimated content score (0\u2013100) based on word count, sentence structure, and content substance. Click Analyze for a full AI-powered assessment.'
+        } />
       </div>
 
-      {/* Quick Stats */}
-      {mockScores && (
-        <div className="mb-5">
-          <QuickStats
-            wordCount={mockScores.wordCount}
-            sentenceCount={mockScores.sentenceCount}
-            readability={mockScores.readabilityEstimate}
-          />
-        </div>
-      )}
+      {/* Quick Stats moved to editor toolbar — see SparkEditor.tsx EditorStatsBar */}
 
       {/* Detected Keywords / Topics */}
       <Section
