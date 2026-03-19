@@ -951,15 +951,17 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               </ExplainableItem>
             ))}
             {lyticsInferredTopics.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-venus-gray-100">
-                <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-1.5">Inferred</p>
-                {lyticsInferredTopics.slice(0, 4).map((t) => (
-                  <div key={t.name} className="opacity-60">
-                    <ExplainableItem forceOpen={expandAll || undefined} explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
-                      <EnhancedBar label={t.name} value={t.score} />
-                    </ExplainableItem>
-                  </div>
-                ))}
+              <div className="mt-4 pt-3 border-t border-venus-gray-100">
+                <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-3">Inferred</p>
+                <div className="space-y-3.5">
+                  {lyticsInferredTopics.slice(0, 4).map((t) => (
+                    <div key={t.name} className="opacity-60">
+                      <ExplainableItem forceOpen={expandAll || undefined} explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
+                        <EnhancedBar label={t.name} value={t.score} />
+                      </ExplainableItem>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {isEnriching && (
