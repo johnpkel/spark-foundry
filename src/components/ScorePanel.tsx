@@ -249,14 +249,17 @@ function QualityCard({
   score,
   tooltip,
   explanation,
+  globalExpand,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
   score: number;
   tooltip?: string;
   explanation?: string;
+  globalExpand?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = globalExpand || localOpen;
   const color =
     score >= 80 ? 'text-venus-green' :
     score >= 60 ? 'text-venus-yellow' :
@@ -274,12 +277,12 @@ function QualityCard({
       <div
         className={`rounded-lg border border-venus-gray-200 p-2.5 ${explanation ? 'cursor-pointer' : ''}`}
         title={tooltip}
-        onClick={explanation ? () => setOpen(!open) : undefined}
+        onClick={explanation ? () => setLocalOpen(!localOpen) : undefined}
       >
         <div className="flex items-center gap-1.5 mb-1.5">
           <Icon size={12} className="text-venus-gray-400" />
           <span className="text-[10px] text-venus-gray-500 uppercase tracking-wider">{label}</span>
-          {explanation && <ChevronDown size={10} className={`ml-auto shrink-0 text-venus-gray-300 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />}
+          {explanation && <ChevronDown size={10} className={`ml-auto shrink-0 text-venus-gray-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />}
         </div>
         <div className={`text-lg font-bold ${color} mb-1`}>{score}</div>
         <div className="w-full h-1 rounded-full bg-venus-gray-100 overflow-hidden">
@@ -427,9 +430,9 @@ function LockedSection({
   );
 }
 
-function ExplainableItem({ children, explanation, forceOpen }: { children: React.ReactNode; explanation: string; forceOpen?: boolean }) {
+function ExplainableItem({ children, explanation, globalExpand }: { children: React.ReactNode; explanation: string; globalExpand?: boolean }) {
   const [localOpen, setLocalOpen] = useState(false);
-  const open = forceOpen ?? localOpen;
+  const open = globalExpand || localOpen;
   return (
     <div>
       <div
@@ -863,7 +866,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       <div className="p-5">
         <div className="flex items-center gap-2 mb-5">
           <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
-          {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+          {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">Updated {timeAgo(lastFetchedAt)}</span>}
         </div>
         <div className="text-center py-12">
           <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
@@ -884,7 +887,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     <div className="p-5">
       <div className="flex items-center gap-2 mb-4">
         <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
-        {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+        {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">Updated {timeAgo(lastFetchedAt)}</span>}
         <div className="ml-auto flex items-center gap-1.5">
           {!showRawData && (
             <button
@@ -946,7 +949,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         ) : lyticsTopics.length > 0 ? (
           <div className="space-y-3.5">
             {lyticsTopics.slice(0, 8).map((t) => (
-              <ExplainableItem key={t.name} forceOpen={expandAll || undefined} explanation={`"${t.name}" was identified by Lytics NLP with ${t.score}% confidence. This topic is extracted by running your editor text through Lytics' content enrichment pipeline (Diffbot + Google NLP + TextRazor + sentiment analysis). Higher confidence means your content strongly signals this subject, which affects which audience segments it aligns with.`}>
+              <ExplainableItem key={t.name} globalExpand={expandAll} explanation={`"${t.name}" was identified by Lytics NLP with ${t.score}% confidence. This topic is extracted by running your editor text through Lytics' content enrichment pipeline (Diffbot + Google NLP + TextRazor + sentiment analysis). Higher confidence means your content strongly signals this subject, which affects which audience segments it aligns with.`}>
                 <EnhancedBar label={t.name} value={t.score} />
               </ExplainableItem>
             ))}
@@ -955,11 +958,11 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                 <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-3">Inferred</p>
                 <div className="space-y-3.5">
                   {lyticsInferredTopics.slice(0, 4).map((t) => (
-                    <div key={t.name} className="opacity-60">
-                      <ExplainableItem forceOpen={expandAll || undefined} explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
+                    <ExplainableItem key={t.name} globalExpand={expandAll} explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
+                      <div className="opacity-60">
                         <EnhancedBar label={t.name} value={t.score} />
-                      </ExplainableItem>
-                    </div>
+                      </div>
+                    </ExplainableItem>
                   ))}
                 </div>
               </div>
@@ -1165,10 +1168,10 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             />
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." explanation={`Score: ${aiResult.contentQuality.readability}/100. AI-assessed using Claude's analysis of sentence length, vocabulary complexity, paragraph structure, and use of plain language. Scores above 70 indicate content accessible to a general business audience. Below 50 suggests overly complex or jargon-heavy writing.`} />
-              <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." explanation={`Score: ${aiResult.contentQuality.clarity}/100. Measures how clearly the content communicates its core message. Claude evaluates logical flow between paragraphs, specificity of claims, absence of ambiguity, and whether the reader can extract the main point quickly.`} />
-              <QualityCard icon={Sparkles} label="Engagement" score={aiResult.contentQuality.engagement} tooltip="How likely the content is to hold a reader's attention. Considers hooks, storytelling, actionable takeaways, and formatting variety." explanation={`Score: ${aiResult.contentQuality.engagement}/100. Predicts how well the content holds reader attention. Claude considers opening hooks, narrative structure, actionable takeaways, varied formatting (lists, headers, examples), and whether the content rewards the reader's time.`} />
-              <QualityCard icon={Search} label="SEO" score={aiResult.contentQuality.seoReadiness} tooltip="How well-optimized the content is for search engines. Considers keyword presence, heading structure, meta-friendliness, and content depth." explanation={`Score: ${aiResult.contentQuality.seoReadiness}/100. Evaluates search engine optimization readiness. Claude checks for keyword presence and density, heading hierarchy (H1→H2→H3), meta-description-friendly opening paragraph, internal/external linking opportunities, and content depth relative to the topic.`} />
+              <QualityCard icon={BookOpen} label="Readability" globalExpand={expandAll} score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." explanation={`Score: ${aiResult.contentQuality.readability}/100. AI-assessed using Claude's analysis of sentence length, vocabulary complexity, paragraph structure, and use of plain language. Scores above 70 indicate content accessible to a general business audience. Below 50 suggests overly complex or jargon-heavy writing.`} />
+              <QualityCard icon={Eye} label="Clarity" globalExpand={expandAll} score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." explanation={`Score: ${aiResult.contentQuality.clarity}/100. Measures how clearly the content communicates its core message. Claude evaluates logical flow between paragraphs, specificity of claims, absence of ambiguity, and whether the reader can extract the main point quickly.`} />
+              <QualityCard icon={Sparkles} label="Engagement" globalExpand={expandAll} score={aiResult.contentQuality.engagement} tooltip="How likely the content is to hold a reader's attention. Considers hooks, storytelling, actionable takeaways, and formatting variety." explanation={`Score: ${aiResult.contentQuality.engagement}/100. Predicts how well the content holds reader attention. Claude considers opening hooks, narrative structure, actionable takeaways, varied formatting (lists, headers, examples), and whether the content rewards the reader's time.`} />
+              <QualityCard icon={Search} label="SEO" globalExpand={expandAll} score={aiResult.contentQuality.seoReadiness} tooltip="How well-optimized the content is for search engines. Considers keyword presence, heading structure, meta-friendliness, and content depth." explanation={`Score: ${aiResult.contentQuality.seoReadiness}/100. Evaluates search engine optimization readiness. Claude checks for keyword presence and density, heading hierarchy (H1→H2→H3), meta-description-friendly opening paragraph, internal/external linking opportunities, and content depth relative to the topic.`} />
             </div>
           )}
         </Section>
