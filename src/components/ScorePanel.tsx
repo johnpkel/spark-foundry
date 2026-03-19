@@ -1041,39 +1041,6 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         <LockedSection icon={Target} title="Content Quality" />
       )}
 
-      {/* AI: Audience Alignment */}
-      {aiResult?.audiences?.length ? (
-        <Section icon={Users} title="Audience Alignment">
-          <div className="space-y-2.5">
-            {aiResult.audiences.slice(0, 6).map((a) => {
-              const dotSize =
-                a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
-                a.size >= 1_000 ? 'w-2 h-2' :
-                'w-1.5 h-1.5';
-
-              const alignColor =
-                a.alignment >= 80 ? 'bg-venus-green text-venus-green' :
-                a.alignment >= 60 ? 'bg-venus-yellow text-venus-yellow' :
-                'bg-venus-gray-300 text-venus-gray-500';
-
-              return (
-                <div key={a.name} className="flex items-center gap-2">
-                  <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} />
-                  <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
-                  <span className="text-[10px] text-venus-gray-400 shrink-0">{formatProfileCount(a.size)}</span>
-                  <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
-                  >
-                    {a.alignment}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-      ) : (
-        <LockedSection icon={Users} title="Audience Alignment" />
-      )}
 
       {/* AI: Channel Fit */}
       {aiResult ? (
