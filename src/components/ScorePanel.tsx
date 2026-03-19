@@ -1026,7 +1026,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                   'bg-venus-gray-300 text-venus-gray-500';
 
                 return (
-                  <ExplainableItem key={a.name} explanation={`"${a.name}" has ${a.size.toLocaleString()} profiles and ${a.alignment}% alignment with your content. Alignment is computed by Lytics' content/align API using cosine similarity between your content's topic vector and the aggregate topic affinities of users in this segment. Higher alignment = this audience behaviorally engages with topics similar to what you're writing about.`}>
+                  <ExplainableItem key={a.name} globalExpand={expandAll} explanation={`"${a.name}" has ${a.size.toLocaleString()} profiles and ${a.alignment}% alignment with your content. Alignment is computed by Lytics' content/align API using cosine similarity between your content's topic vector and the aggregate topic affinities of users in this segment. Higher alignment = this audience behaviorally engages with topics similar to what you're writing about.`}>
                     <div className="flex items-center gap-2">
                       <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} title="Relative audience size" />
                       <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
@@ -1067,7 +1067,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                 .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
                 .slice(0, 5)
                 .map((o) => (
-                  <ExplainableItem key={o.topic} explanation={`"${o.topic}" has ${o.userCount.toLocaleString()} interested users but only ${o.docCount} published docs. Opportunity score (${o.opportunityScore}%) = (userCount / maxUserCount) × (1 - docCount / maxDocCount). High score = many users interested, few docs available — a content gap worth filling.`}>
+                  <ExplainableItem key={o.topic} globalExpand={expandAll} explanation={`"${o.topic}" has ${o.userCount.toLocaleString()} interested users but only ${o.docCount} published docs. Opportunity score (${o.opportunityScore}%) = (userCount / maxUserCount) × (1 - docCount / maxDocCount). High score = many users interested, few docs available — a content gap worth filling.`}>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-0.5">
@@ -1205,7 +1205,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           ) : (
             <div className="space-y-3.5">
               {[...aiResult.channelFit].sort((a, b) => b.score - a.score).map((ch) => (
-                <ExplainableItem key={ch.channel} explanation={`"${ch.channel}" fit: ${ch.score}%. AI-assessed by Claude based on content length, format, tone, and structure. ${ch.channel === 'Blog' ? 'Blogs favor 800-2000 word long-form with headers and images.' : ch.channel === 'Email' ? 'Email favors concise, scannable content with a clear CTA.' : ch.channel === 'Social' ? 'Social favors punchy, shareable snippets under 280 chars with hooks.' : ch.channel === 'Web Page' ? 'Web pages favor structured, scannable content with clear navigation and CTAs.' : 'Newsletters favor curated, multi-topic formats with brief summaries and links.'}`}>
+                <ExplainableItem key={ch.channel} globalExpand={expandAll} explanation={`"${ch.channel}" fit: ${ch.score}%. AI-assessed by Claude based on content length, format, tone, and structure. ${ch.channel === 'Blog' ? 'Blogs favor 800-2000 word long-form with headers and images.' : ch.channel === 'Email' ? 'Email favors concise, scannable content with a clear CTA.' : ch.channel === 'Social' ? 'Social favors punchy, shareable snippets under 280 chars with hooks.' : ch.channel === 'Web Page' ? 'Web pages favor structured, scannable content with clear navigation and CTAs.' : 'Newsletters favor curated, multi-topic formats with brief summaries and links.'}`}>
                   <EnhancedBar label={ch.channel} value={ch.score} />
                 </ExplainableItem>
               ))}
