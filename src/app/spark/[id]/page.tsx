@@ -786,7 +786,13 @@ function SparkWorkspacePage() {
                   onAddReply={handleAddReply}
                 />
               ) : (
-                <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} primaryDomains={(spark.metadata?.primaryDomains as string[]) ?? []} />
+                <ScorePanel
+                  sparkItems={items}
+                  canvasGroups={canvasState.groups}
+                  primaryDomains={(spark.metadata?.primaryDomains as string[]) ?? []}
+                  sparkId={sparkId}
+                  initialLyticsCache={(spark.metadata?.lyticsCache as Record<string, unknown>) ?? undefined}
+                />
               )}
             </div>
           )}

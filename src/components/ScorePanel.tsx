@@ -69,10 +69,23 @@ interface FullAnalysisResult {
   relatedSparkItems: { id: string; title: string; similarity: number }[];
 }
 
+interface LyticsCacheData {
+  topics?: { name: string; score: number }[];
+  inferredTopics?: { name: string; score: number }[];
+  audiences?: { name: string; alignment: number; size: number }[];
+  opportunity?: { topic: string; userCount: number; docCount: number; opportunityScore: number }[];
+  aid?: string;
+  fullAnalysis?: FullAnalysisResult | null;
+  aiResult?: AIAnalysisResult | null;
+  lastUpdated?: string;
+}
+
 interface ScorePanelProps {
   sparkItems: SparkItem[];
   canvasGroups: CanvasGroup[];
   primaryDomains?: string[];
+  sparkId?: string;
+  initialLyticsCache?: LyticsCacheData;
 }
 
 /* ── Stop words for keyword extraction ──────── */
@@ -397,23 +410,25 @@ function formatProfileCount(count: number): string {
 
 const MOCK_DEBOUNCE_MS = 500;
 
-export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = [] }: ScorePanelProps) {
+export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = [], sparkId, initialLyticsCache }: ScorePanelProps) {
   const editorCtx = useEditorContext();
 
   const [mockScores, setMockScores] = useState<MockScores | null>(null);
-  const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
+  const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(initialLyticsCache?.aiResult ?? null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [fullAnalysis, setFullAnalysis] = useState<FullAnalysisResult | null>(null);
+  const [fullAnalysis, setFullAnalysis] = useState<FullAnalysisResult | null>(initialLyticsCache?.fullAnalysis ?? null);
 
-  // Lytics ambient data state
-  const [lyticsAvailable, setLyticsAvailable] = useState(false);
-  const [lyticsTopics, setLyticsTopics] = useState<{ name: string; score: number }[]>([]);
-  const [lyticsInferredTopics, setLyticsInferredTopics] = useState<{ name: string; score: number }[]>([]);
-  const [lyticsAudiences, setLyticsAudiences] = useState<{ name: string; alignment: number; size: number }[]>([]);
-  const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>([]);
+  // Lytics ambient data state — hydrate from persisted cache
+  const [lyticsAvailable, setLyticsAvailable] = useState(
+    !!(initialLyticsCache?.topics?.length || initialLyticsCache?.audiences?.length)
+  );
+  const [lyticsTopics, setLyticsTopics] = useState<{ name: string; score: number }[]>(initialLyticsCache?.topics ?? []);
+  const [lyticsInferredTopics, setLyticsInferredTopics] = useState<{ name: string; score: number }[]>(initialLyticsCache?.inferredTopics ?? []);
+  const [lyticsAudiences, setLyticsAudiences] = useState<{ name: string; alignment: number; size: number }[]>(initialLyticsCache?.audiences ?? []);
+  const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>(initialLyticsCache?.opportunity ?? []);
   const [isEnriching, setIsEnriching] = useState(false);
-  const [lyticsAid, setLyticsAid] = useState('');
+  const [lyticsAid, setLyticsAid] = useState(initialLyticsCache?.aid ?? '');
 
   const enrichDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const lastEnrichedTextRef = useRef('');
@@ -426,6 +441,21 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   itemsRef.current = sparkItems;
   const groupsRef = useRef(canvasGroups);
   groupsRef.current = canvasGroups;
+
+  // ── Persist Lytics cache to Spark metadata ──────────
+  const cacheSaveRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  const persistLyticsCache = useCallback((data: LyticsCacheData) => {
+    if (!sparkId) return;
+    if (cacheSaveRef.current) clearTimeout(cacheSaveRef.current);
+    cacheSaveRef.current = setTimeout(() => {
+      fetch(`/api/sparks/${sparkId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metadata_merge: { lyticsCache: { ...data, lastUpdated: new Date().toISOString() } } }),
+      }).catch(() => {});
+    }, 1000);
+  }, [sparkId]);
 
   /** Extract text content from SparkItems referenced by GroupBlock nodes */
   const extractReferencedItemTexts = useCallback((): string[] => {
@@ -520,6 +550,17 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       // Store the full analysis result for Layer 2 sections
       setFullAnalysis(data);
       setErrorMsg('');
+
+      // Persist full analysis to Spark metadata
+      persistLyticsCache({
+        topics: data.lytics?.topics ?? lyticsTopics,
+        inferredTopics: lyticsInferredTopics,
+        audiences: data.lytics?.audiences ?? lyticsAudiences,
+        opportunity: lyticsOpportunity,
+        aid: lyticsAid,
+        fullAnalysis: data,
+        aiResult: data.ai?.qualityAnalysis ?? null,
+      });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -577,7 +618,9 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               t.opportunityScore = Math.round((t.userCount / maxUsers) * (1 - t.docCount / maxDocs) * 100);
             }
             topics.sort((a: { opportunityScore: number }, b: { opportunityScore: number }) => b.opportunityScore - a.opportunityScore);
-            setLyticsOpportunity(topics.slice(0, 20));
+            const sliced = topics.slice(0, 20);
+            setLyticsOpportunity(sliced);
+            persistLyticsCache({ opportunity: sliced, aid: String(data.aid || '') });
           }
         }
       })
@@ -610,6 +653,11 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             if (data.topics) setLyticsTopics(data.topics);
             if (data.inferredTopics) setLyticsInferredTopics(data.inferredTopics);
             if (data.audiences) setLyticsAudiences(data.audiences);
+            // Persist to Spark metadata
+            persistLyticsCache({
+              topics: data.topics, inferredTopics: data.inferredTopics,
+              audiences: data.audiences, aid: lyticsAid,
+            });
           })
           .catch(() => {})
           .finally(() => setIsEnriching(false));

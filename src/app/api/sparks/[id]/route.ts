@@ -41,9 +41,26 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json();
 
+  // Support metadata_merge: merges keys into existing metadata without replacing it.
+  // This avoids race conditions where concurrent saves overwrite each other's keys.
+  let updatePayload = body;
+  if (body.metadata_merge) {
+    const { data: current } = await supabaseAdmin
+      .from('sparks')
+      .select('metadata')
+      .eq('id', id)
+      .single();
+    const existingMetadata = (current?.metadata as Record<string, unknown>) ?? {};
+    const { metadata_merge, ...rest } = body;
+    updatePayload = {
+      ...rest,
+      metadata: { ...existingMetadata, ...metadata_merge },
+    };
+  }
+
   const { data, error } = await supabaseAdmin
     .from('sparks')
-    .update(body)
+    .update(updatePayload)
     .eq('id', id)
     .select()
     .single();
