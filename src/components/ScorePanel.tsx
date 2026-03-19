@@ -459,10 +459,10 @@ function RawDataBlock({ title, data, formula }: { title: string; data: Record<st
       <h5 className="text-[10px] font-semibold text-venus-gray-500 uppercase tracking-wider mb-1">{title}</h5>
       {formula && (
         <div className="mb-1.5 px-2 py-1 rounded bg-venus-purple/5 border border-venus-purple/10">
-          <code className="text-[9px] text-venus-purple font-mono">{formula}</code>
+          <code className="text-[9px] text-venus-purple font-mono break-words">{formula}</code>
         </div>
       )}
-      <pre className="text-[9px] text-venus-gray-600 font-mono bg-venus-gray-50 dark:bg-venus-gray-800/30 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto border border-venus-gray-100">
+      <pre className="text-[9px] text-venus-gray-600 font-mono bg-venus-gray-50 dark:bg-venus-gray-800/30 rounded p-2 max-h-48 overflow-y-auto border border-venus-gray-100 whitespace-pre-wrap break-words">
         {JSON.stringify(data, null, 2)}
       </pre>
     </div>
