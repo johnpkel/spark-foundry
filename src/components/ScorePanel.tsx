@@ -416,6 +416,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   const [mockScores, setMockScores] = useState<MockScores | null>(null);
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(initialLyticsCache?.aiResult ?? null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeSteps, setAnalyzeSteps] = useState<{ id: string; label: string; status: 'active' | 'done' }[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [fullAnalysis, setFullAnalysis] = useState<FullAnalysisResult | null>(initialLyticsCache?.fullAnalysis ?? null);
 
@@ -500,7 +501,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     setMockScores(computeMockScores(text));
   }, [editorCtx]);
 
-  /** Run AI analysis */
+  /** Run AI analysis via SSE stream */
   const analyze = useCallback(async () => {
     const editor = editorCtx?.getEditor();
     if (!editor) return;
@@ -519,6 +520,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     abortRef.current = controller;
 
     setIsAnalyzing(true);
+    setAnalyzeSteps([]);
     setErrorMsg('');
 
     try {
@@ -530,44 +532,74 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
+        const text = await res.text();
+        try { throw new Error(JSON.parse(text).error || `HTTP ${res.status}`); }
+        catch { throw new Error(`HTTP ${res.status}`); }
       }
 
-      const data = await res.json();
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
 
-      // Update Lytics data from the refreshed response
-      if (data.lytics) {
-        if (data.lytics.topics) setLyticsTopics(data.lytics.topics);
-        if (data.lytics.audiences) setLyticsAudiences(data.lytics.audiences);
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent) {
+            const payload = JSON.parse(line.slice(6));
+
+            if (currentEvent === 'step') {
+              setAnalyzeSteps((prev) => {
+                const existing = prev.findIndex((s) => s.id === payload.id);
+                if (existing >= 0) {
+                  const updated = [...prev];
+                  updated[existing] = payload;
+                  return updated;
+                }
+                return [...prev, payload];
+              });
+            } else if (currentEvent === 'result') {
+              const data = payload;
+              if (data.lytics) {
+                if (data.lytics.topics) setLyticsTopics(data.lytics.topics);
+                if (data.lytics.audiences) setLyticsAudiences(data.lytics.audiences);
+              }
+              if (data.ai?.qualityAnalysis) setAiResult(data.ai.qualityAnalysis);
+              setFullAnalysis(data);
+              setErrorMsg('');
+              persistLyticsCache({
+                topics: data.lytics?.topics ?? lyticsTopics,
+                inferredTopics: lyticsInferredTopics,
+                audiences: data.lytics?.audiences ?? lyticsAudiences,
+                opportunity: lyticsOpportunity,
+                aid: lyticsAid,
+                fullAnalysis: data,
+                aiResult: data.ai?.qualityAnalysis ?? null,
+              });
+            } else if (currentEvent === 'error') {
+              throw new Error(payload.error || 'Analysis failed');
+            }
+            currentEvent = '';
+          }
+        }
       }
-
-      // Set AI result from the response
-      if (data.ai?.qualityAnalysis) {
-        setAiResult(data.ai.qualityAnalysis);
-      }
-
-      // Store the full analysis result for Layer 2 sections
-      setFullAnalysis(data);
-      setErrorMsg('');
-
-      // Persist full analysis to Spark metadata
-      persistLyticsCache({
-        topics: data.lytics?.topics ?? lyticsTopics,
-        inferredTopics: lyticsInferredTopics,
-        audiences: data.lytics?.audiences ?? lyticsAudiences,
-        opportunity: lyticsOpportunity,
-        aid: lyticsAid,
-        fullAnalysis: data,
-        aiResult: data.ai?.qualityAnalysis ?? null,
-      });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setErrorMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setIsAnalyzing(false);
     }
-  }, [editorCtx, extractReferencedItemTexts]);
+  }, [editorCtx, extractReferencedItemTexts, persistLyticsCache, lyticsTopics, lyticsInferredTopics, lyticsAudiences, lyticsOpportunity, lyticsAid, primaryDomains]);
 
   // Listen for editor updates — debounced mock scoring
   useEffect(() => {
@@ -706,7 +738,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       <button
         onClick={analyze}
         disabled={isAnalyzing || !hasContent}
-        className="w-full mb-5 flex items-center justify-center gap-2 px-4 py-2.5 bg-venus-purple hover:bg-venus-purple-deep disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-venus-purple hover:bg-venus-purple-deep disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
       >
         {isAnalyzing ? (
           <>
@@ -720,6 +752,40 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           </>
         )}
       </button>
+
+      {/* Analysis progress steps */}
+      {isAnalyzing && analyzeSteps.length > 0 && (
+        <div className="mt-2 mb-3 rounded-lg border border-venus-gray-200 bg-surface-secondary overflow-hidden">
+          {analyzeSteps.map((step) => (
+            <div key={step.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-venus-gray-100 last:border-b-0">
+              {step.status === 'active' ? (
+                <Loader2 size={10} className="animate-spin text-venus-purple shrink-0" />
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 16 16" className="text-venus-green shrink-0">
+                  <circle cx="8" cy="8" r="8" fill="currentColor" />
+                  <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+              <span className={`text-[10px] leading-tight ${step.status === 'active' ? 'text-venus-gray-600' : 'text-venus-gray-400'}`}>
+                {step.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Completed steps summary (briefly shown after completion) */}
+      {!isAnalyzing && analyzeSteps.length > 0 && (
+        <div className="mt-2 mb-3 rounded-lg border border-venus-green/20 bg-venus-green/5 px-3 py-2">
+          <div className="flex items-center gap-1.5 text-[10px] text-venus-green font-medium">
+            <svg width="10" height="10" viewBox="0 0 16 16">
+              <circle cx="8" cy="8" r="8" fill="currentColor" />
+              <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Analysis complete — {analyzeSteps.length} steps
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="mb-4 text-xs text-red-500 bg-red-50 dark:bg-red-950/30 rounded-md px-3 py-2">

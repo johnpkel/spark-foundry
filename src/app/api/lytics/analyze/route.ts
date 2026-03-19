@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { addLogEntry } from '@/lib/activity-logger';
 import {
@@ -16,7 +15,6 @@ const anthropic = new Anthropic();
 const MAX_TEXT_LENGTH = 4000;
 
 // Only look up content entities for URLs on the Spark's primary domains.
-// Other URLs (Google Docs, Slack, etc.) would always 404 in the Lytics index.
 function isIndexedUrl(url: string, primaryDomains: string[]): boolean {
   if (primaryDomains.length === 0) return false;
   try {
@@ -146,81 +144,115 @@ function buildLyticsContext(
   return ctx;
 }
 
-// ─── Route handler ──────────────────────────────────
+// ─── SSE Route handler ──────────────────────────────
 
 export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { text, referencedItemTexts, sparkItemUrls, primaryDomains: rawDomains } = body as {
-      text?: string;
-      referencedItemTexts?: string[];
-      sparkItemUrls?: string[];
-      primaryDomains?: string[];
-    };
-    const primaryDomains = (rawDomains ?? []).map((d) => d.toLowerCase());
+  const body = await req.json();
+  const { text, referencedItemTexts, sparkItemUrls, primaryDomains: rawDomains } = body as {
+    text?: string;
+    referencedItemTexts?: string[];
+    sparkItemUrls?: string[];
+    primaryDomains?: string[];
+  };
+  const primaryDomains = (rawDomains ?? []).map((d) => d.toLowerCase());
 
-    if (!text && (!referencedItemTexts || referencedItemTexts.length === 0)) {
-      return NextResponse.json({ error: 'text or referencedItemTexts is required' }, { status: 400 });
-    }
+  if (!text && (!referencedItemTexts || referencedItemTexts.length === 0)) {
+    return new Response(JSON.stringify({ error: 'text or referencedItemTexts is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-    // Combine text
-    const parts = [text ?? '', ...(referencedItemTexts ?? [])].filter(Boolean);
-    const combinedText = parts.join('\n\n---\n\n').slice(0, MAX_TEXT_LENGTH);
+  const parts = [text ?? '', ...(referencedItemTexts ?? [])].filter(Boolean);
+  const combinedText = parts.join('\n\n---\n\n').slice(0, MAX_TEXT_LENGTH);
 
-    // ── Lytics data collection (parallel where possible) ──
-    let lyticsTopics: FormattedTopic[] = [];
-    let lyticsAudiences: FormattedAudience[] = [];
-    let aggregateAffinities: AggregateAffinity[] = [];
-    let lyticsContentRecs: LyticsContentEntity[] = [];
-    let matchedOpportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[] = [];
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
 
-    if (isAvailable()) {
-      // Phase 1: refresh global data + enrich content in parallel
-      const [, enrichResult] = await Promise.all([
-        refreshGlobalData(),
-        enrichEditorContent(combinedText),
-      ]);
+      try {
+        let lyticsTopics: FormattedTopic[] = [];
+        let lyticsAudiences: FormattedAudience[] = [];
+        let aggregateAffinities: AggregateAffinity[] = [];
+        let lyticsContentRecs: LyticsContentEntity[] = [];
+        let matchedOpportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[] = [];
 
-      lyticsTopics = enrichResult.topics;
-      lyticsAudiences = enrichResult.audiences;
+        if (isAvailable()) {
+          // ── Step 1: Refresh Lytics data + classify content ──
+          send('step', { id: 'lytics-refresh', label: 'Refreshing Lytics segments & opportunity data', status: 'active' });
+          send('step', { id: 'lytics-enrich', label: 'Classifying content topics via Lytics NLP', status: 'active' });
 
-      // Phase 2: sample aggregate affinities + fetch content entities in parallel
-      // Only look up URLs from the Spark's primary domains (skip Google Docs, Slack, etc.)
-      const indexedUrls = (sparkItemUrls ?? []).filter((url) => isIndexedUrl(url, primaryDomains)).slice(0, 5);
-      const contentEntityPromises = indexedUrls.map((url) => getContentByUrl(url));
+          const [, enrichResult] = await Promise.all([
+            refreshGlobalData(),
+            enrichEditorContent(combinedText),
+          ]);
 
-      const [affinities, ...contentEntities] = await Promise.all([
-        sampleAggregateAffinities(5),
-        ...contentEntityPromises,
-      ]);
+          lyticsTopics = enrichResult.topics;
+          lyticsAudiences = enrichResult.audiences;
 
-      aggregateAffinities = affinities;
-      lyticsContentRecs = contentEntities.filter((e): e is LyticsContentEntity => e !== null);
+          send('step', { id: 'lytics-refresh', label: `Loaded ${getData().segments.length} segments, ${getData().opportunity.length} topics`, status: 'done' });
+          send('step', { id: 'lytics-enrich', label: `Found ${lyticsTopics.length} topics, ${lyticsAudiences.length} audiences`, status: 'done' });
 
-      // Compute matched opportunity
-      const data = getData();
-      const topicNames = new Set(lyticsTopics.map((t) => t.name.toLowerCase()));
-      const maxUsers = Math.max(...data.opportunity.map((t) => getDimension(t, 'User Count')), 1);
-      const maxDocs = Math.max(...data.opportunity.map((t) => getDimension(t, 'Document Count')), 1);
-      matchedOpportunity = data.opportunity
-        .filter((o) => topicNames.has(o.topic.toLowerCase()) && getDimension(o, 'User Count') > 0)
-        .map((o) => ({
-          topic: o.topic,
-          userCount: getDimension(o, 'User Count'),
-          docCount: getDimension(o, 'Document Count'),
-          opportunityScore: computeOpportunityScore(o, maxUsers, maxDocs),
-        }))
-        .sort((a, b) => b.opportunityScore - a.opportunityScore)
-        .slice(0, 20);
-    }
+          // ── Step 2: Sample profiles + fetch content entities ──
+          send('step', { id: 'lytics-profiles', label: 'Sampling audience profile affinities', status: 'active' });
 
-    // ── Claude AI Analysis ──────────────────────────
-    const hasLyticsData = lyticsTopics.length > 0 || lyticsAudiences.length > 0;
-    const lyticsContext = hasLyticsData
-      ? buildLyticsContext(lyticsTopics, lyticsAudiences, aggregateAffinities)
-      : '';
+          const indexedUrls = (sparkItemUrls ?? []).filter((url) => isIndexedUrl(url, primaryDomains)).slice(0, 5);
+          if (indexedUrls.length > 0) {
+            send('step', { id: 'lytics-content', label: `Looking up ${indexedUrls.length} content entities`, status: 'active' });
+          }
 
-    const systemPrompt = `You are a senior content strategist and digital marketing analyst. Analyze the provided content and produce a structured quality assessment.
+          const contentEntityPromises = indexedUrls.map((url) => getContentByUrl(url));
+          const [affinities, ...contentEntities] = await Promise.all([
+            sampleAggregateAffinities(5),
+            ...contentEntityPromises,
+          ]);
+
+          aggregateAffinities = affinities;
+          lyticsContentRecs = contentEntities.filter((e): e is LyticsContentEntity => e !== null);
+
+          send('step', { id: 'lytics-profiles', label: `Sampled ${affinities.length} audience profiles`, status: 'done' });
+          if (indexedUrls.length > 0) {
+            send('step', { id: 'lytics-content', label: `Found ${lyticsContentRecs.length} indexed content matches`, status: 'done' });
+          }
+
+          // ── Step 3: Compute opportunity ──
+          send('step', { id: 'opportunity', label: 'Computing content opportunity scores', status: 'active' });
+
+          const data = getData();
+          const topicNames = new Set(lyticsTopics.map((t) => t.name.toLowerCase()));
+          const maxUsers = Math.max(...data.opportunity.map((t) => getDimension(t, 'User Count')), 1);
+          const maxDocs = Math.max(...data.opportunity.map((t) => getDimension(t, 'Document Count')), 1);
+          matchedOpportunity = data.opportunity
+            .filter((o) => topicNames.has(o.topic.toLowerCase()) && getDimension(o, 'User Count') > 0)
+            .map((o) => ({
+              topic: o.topic,
+              userCount: getDimension(o, 'User Count'),
+              docCount: getDimension(o, 'Document Count'),
+              opportunityScore: computeOpportunityScore(o, maxUsers, maxDocs),
+            }))
+            .sort((a, b) => b.opportunityScore - a.opportunityScore)
+            .slice(0, 20);
+
+          send('step', { id: 'opportunity', label: `Matched ${matchedOpportunity.length} opportunity topics`, status: 'done' });
+        }
+
+        // ── Step 4: Claude AI Analysis ──
+        const hasLyticsData = lyticsTopics.length > 0 || lyticsAudiences.length > 0;
+        send('step', {
+          id: 'ai-analysis',
+          label: hasLyticsData
+            ? 'Running AI analysis with Lytics audience context'
+            : 'Running AI content quality analysis',
+          status: 'active',
+        });
+
+        const lyticsContext = hasLyticsData
+          ? buildLyticsContext(lyticsTopics, lyticsAudiences, aggregateAffinities)
+          : '';
+
+        const systemPrompt = `You are a senior content strategist and digital marketing analyst. Analyze the provided content and produce a structured quality assessment.
 
 Guidelines:
 - Read the actual content carefully. Identify real topics, themes, and audiences — don't fabricate generic ones.
@@ -242,69 +274,88 @@ For strategic analysis:
 ` : `
 You MUST call the submit_content_analysis tool with your analysis.`}`;
 
-    const tools = hasLyticsData ? [QUALITY_TOOL, STRATEGIC_TOOL] : [QUALITY_TOOL];
+        const tools = hasLyticsData ? [QUALITY_TOOL, STRATEGIC_TOOL] : [QUALITY_TOOL];
 
-    const start = Date.now();
-    addLogEntry({
-      service: 'anthropic',
-      direction: 'request',
-      level: 'info',
-      summary: `lytics/analyze — ${combinedText.length} chars, lytics=${hasLyticsData}`,
-      requestBody: { model: 'claude-sonnet-4-6', chars: combinedText.length, hasLytics: hasLyticsData },
-    });
+        const start = Date.now();
+        addLogEntry({
+          service: 'anthropic',
+          direction: 'request',
+          level: 'info',
+          summary: `lytics/analyze — ${combinedText.length} chars, lytics=${hasLyticsData}`,
+          requestBody: { model: 'claude-sonnet-4-6', chars: combinedText.length, hasLytics: hasLyticsData },
+        });
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: systemPrompt,
-      tools,
-      messages: [{ role: 'user', content: `Analyze this content:\n\n${combinedText}` }],
-    });
+        const response = await anthropic.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4096,
+          system: systemPrompt,
+          tools,
+          messages: [{ role: 'user', content: `Analyze this content:\n\n${combinedText}` }],
+        });
 
-    addLogEntry({
-      service: 'anthropic',
-      direction: 'response',
-      level: 'info',
-      summary: `lytics/analyze — done (in:${response.usage.input_tokens} out:${response.usage.output_tokens})`,
-      duration: Date.now() - start,
-    });
+        addLogEntry({
+          service: 'anthropic',
+          direction: 'response',
+          level: 'info',
+          summary: `lytics/analyze — done (in:${response.usage.input_tokens} out:${response.usage.output_tokens})`,
+          duration: Date.now() - start,
+        });
 
-    // Extract tool call results
-    const toolBlocks = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-    );
+        send('step', {
+          id: 'ai-analysis',
+          label: `AI analysis complete (${Math.round((Date.now() - start) / 1000)}s)`,
+          status: 'done',
+        });
 
-    const qualityBlock = toolBlocks.find((b) => b.name === 'submit_content_analysis');
-    const strategicBlock = toolBlocks.find((b) => b.name === 'submit_strategic_analysis');
+        // Extract tool call results
+        const toolBlocks = response.content.filter(
+          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+        );
 
-    const qualityAnalysis = (qualityBlock?.input as Record<string, unknown>) ?? {
-      overallScore: 0, summary: 'Analysis unavailable', topics: [], contentQuality: { readability: 0, clarity: 0, engagement: 0, seoReadiness: 0 }, channelFit: [],
-    };
-    const strategicAnalysis = (strategicBlock?.input as Record<string, unknown>) ?? {
-      contentComparison: '', recommendations: { contentUpdates: [], campaignIdeas: [], underservedAudiences: [], contentGaps: [] },
-    };
+        const qualityBlock = toolBlocks.find((b) => b.name === 'submit_content_analysis');
+        const strategicBlock = toolBlocks.find((b) => b.name === 'submit_strategic_analysis');
 
-    return NextResponse.json({
-      lytics: {
-        topics: lyticsTopics,
-        audiences: lyticsAudiences,
-        opportunity: matchedOpportunity,
-        aggregateAffinities,
-        lyticsContentRecs: lyticsContentRecs.map((e) => ({ url: e.url, title: e.title, lytics: e.lytics })),
-      },
-      ai: {
-        contentComparison: (strategicAnalysis as Record<string, unknown>).contentComparison ?? '',
-        qualityAnalysis,
-        recommendations: (strategicAnalysis as Record<string, unknown>).recommendations ?? {
-          contentUpdates: [], campaignIdeas: [], underservedAudiences: [], contentGaps: [],
-        },
-      },
-      relatedSparkItems: [],
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[lytics/analyze]', message);
-    addLogEntry({ service: 'anthropic', direction: 'response', level: 'error', summary: `lytics/analyze — ${message}` });
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+        const qualityAnalysis = (qualityBlock?.input as Record<string, unknown>) ?? {
+          overallScore: 0, summary: 'Analysis unavailable', topics: [], contentQuality: { readability: 0, clarity: 0, engagement: 0, seoReadiness: 0 }, channelFit: [],
+        };
+        const strategicAnalysis = (strategicBlock?.input as Record<string, unknown>) ?? {
+          contentComparison: '', recommendations: { contentUpdates: [], campaignIdeas: [], underservedAudiences: [], contentGaps: [] },
+        };
+
+        // ── Final result ──
+        send('result', {
+          lytics: {
+            topics: lyticsTopics,
+            audiences: lyticsAudiences,
+            opportunity: matchedOpportunity,
+            aggregateAffinities,
+            lyticsContentRecs: lyticsContentRecs.map((e) => ({ url: e.url, title: e.title, lytics: e.lytics })),
+          },
+          ai: {
+            contentComparison: (strategicAnalysis as Record<string, unknown>).contentComparison ?? '',
+            qualityAnalysis,
+            recommendations: (strategicAnalysis as Record<string, unknown>).recommendations ?? {
+              contentUpdates: [], campaignIdeas: [], underservedAudiences: [], contentGaps: [],
+            },
+          },
+          relatedSparkItems: [],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[lytics/analyze]', message);
+        addLogEntry({ service: 'anthropic', direction: 'response', level: 'error', summary: `lytics/analyze — ${message}` });
+        send('error', { error: message });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
