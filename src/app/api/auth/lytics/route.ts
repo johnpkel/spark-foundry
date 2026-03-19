@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 const COOKIE_NAME = 'lytics_token';
+const DISABLED_COOKIE = 'lytics_disabled';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
 
 // Simple AES-GCM encryption using a stable secret
@@ -71,9 +72,10 @@ export async function POST(req: Request) {
     const firstSeg = data.data?.[0] as Record<string, unknown> | undefined;
     const aid = firstSeg?.aid ?? '';
 
-    // Store encrypted token in cookie
+    // Store encrypted token in cookie + clear any disabled flag
     const encrypted = await encrypt(token.trim());
     const cookieStore = await cookies();
+    cookieStore.delete(DISABLED_COOKIE);
     cookieStore.set(COOKIE_NAME, encrypted, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -92,11 +94,19 @@ export async function POST(req: Request) {
 }
 
 /**
- * DELETE /api/auth/lytics — Disconnect: clear the cookie
+ * DELETE /api/auth/lytics — Disconnect: clear token and mark as disabled
+ * The disabled flag prevents the env var fallback from re-activating.
  */
 export async function DELETE() {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
+  cookieStore.set(DISABLED_COOKIE, '1', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: COOKIE_MAX_AGE,
+  });
   return NextResponse.json({ success: true });
 }
 
@@ -111,15 +121,21 @@ export async function GET() {
 
 /** Read the Lytics token from cookie, falling back to env var */
 export async function getLyticsToken(): Promise<string | null> {
-  // Try cookie first (user-configured)
   try {
     const cookieStore = await cookies();
+
+    // If explicitly disconnected via UI, don't fall back to env var
+    if (cookieStore.get(DISABLED_COOKIE)?.value) {
+      return null;
+    }
+
+    // Try cookie first (user-configured)
     const cookie = cookieStore.get(COOKIE_NAME);
     if (cookie?.value) {
       return await decrypt(cookie.value);
     }
   } catch {
-    // Cookie decryption failed — fall through
+    // Cookie access failed — fall through to env var
   }
 
   // Fall back to env var
