@@ -322,9 +322,9 @@ function Tooltip({ text }: { text: string }) {
         <Info size={10} />
       </button>
       {show && (
-        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-50 pointer-events-none">
+        <div className="absolute right-0 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-50 pointer-events-none">
           {text}
-          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-venus-gray-700" />
+          <div className="absolute right-3 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-venus-gray-700" />
         </div>
       )}
     </span>
@@ -349,11 +349,13 @@ function Section({
   return (
     <div className="mb-5 last:mb-0">
       <div className="flex items-center gap-1.5 mb-2.5">
-        <Icon size={14} className="text-venus-purple" />
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-venus-gray-500">
-          {title}
-        </h4>
-        {tooltip && <Tooltip text={tooltip} />}
+        <div className="flex items-center gap-1.5 rounded px-1 -ml-1 py-0.5 hover:bg-venus-gray-100 transition-colors" title={tooltip}>
+          <Icon size={14} className="text-venus-purple" />
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-venus-gray-500">
+            {title}
+          </h4>
+          {tooltip && <Info size={9} className="text-venus-gray-300" />}
+        </div>
         {sourceUrl && (
           <a
             href={sourceUrl}
@@ -398,6 +400,59 @@ function LockedSection({
 function lyticsUrl(aid: string, path: string): string | undefined {
   if (!aid) return undefined;
   return `https://app.lytics.io/a/${aid}/${path}`;
+}
+
+function CollapsibleSummary({ summary }: { summary: string }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div className="mb-5 bg-venus-purple/5 border border-venus-purple/10 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-venus-purple/10 transition-colors"
+      >
+        <Sparkles size={11} className="text-venus-purple shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-venus-purple">Summary</span>
+        <span className="ml-auto text-venus-gray-400 text-[9px]">{collapsed ? '▼' : '▲'}</span>
+      </button>
+      {!collapsed && (
+        <div className="px-3 pb-2.5 text-xs text-venus-gray-600 leading-relaxed">
+          {summary}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExpandableSteps({ steps }: { steps: { id: string; label: string; status: string }[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-2 mb-3 rounded-lg border border-venus-green/20 bg-venus-green/5 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-[10px] text-venus-green font-medium hover:bg-venus-green/10 transition-colors"
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" className="shrink-0">
+          <circle cx="8" cy="8" r="8" fill="currentColor" />
+          <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="flex-1 text-left">Analysis complete — {steps.length} steps</span>
+        <span className="text-venus-gray-400 text-[9px]">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-venus-green/10">
+          {steps.map((step) => (
+            <div key={step.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-venus-green/5 last:border-b-0">
+              <svg width="8" height="8" viewBox="0 0 16 16" className="text-venus-green shrink-0">
+                <circle cx="8" cy="8" r="8" fill="currentColor" />
+                <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="text-[10px] text-venus-gray-500 leading-tight">{step.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatProfileCount(count: number): string {
@@ -706,8 +761,6 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     };
   }, [editorCtx, lyticsAvailable]);
 
-  // Determine display score
-  const displayScore = aiResult?.overallScore ?? mockScores?.overallScore ?? 0;
   const hasContent = !!mockScores;
 
   /* ── Idle state ── */
@@ -774,17 +827,9 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         </div>
       )}
 
-      {/* Completed steps summary (briefly shown after completion) */}
+      {/* Completed steps (expandable) */}
       {!isAnalyzing && analyzeSteps.length > 0 && (
-        <div className="mt-2 mb-3 rounded-lg border border-venus-green/20 bg-venus-green/5 px-3 py-2">
-          <div className="flex items-center gap-1.5 text-[10px] text-venus-green font-medium">
-            <svg width="10" height="10" viewBox="0 0 16 16">
-              <circle cx="8" cy="8" r="8" fill="currentColor" />
-              <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Analysis complete — {analyzeSteps.length} steps
-          </div>
-        </div>
+        <ExpandableSteps steps={analyzeSteps} />
       )}
 
       {errorMsg && (
@@ -793,21 +838,18 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         </div>
       )}
 
-      {/* AI Summary */}
+      {/* AI Summary (collapsible) */}
       {aiResult?.summary && (
-        <div className="mb-5 text-xs text-venus-gray-600 bg-venus-purple/5 border border-venus-purple/10 rounded-lg px-3 py-2.5 leading-relaxed">
-          <span className="text-venus-purple font-semibold">AI:</span> {aiResult.summary}
-        </div>
+        <CollapsibleSummary summary={aiResult.summary} />
       )}
 
-      {/* Ring Chart */}
-      <div className="flex items-center justify-center gap-2 mb-5">
-        <RingChart score={displayScore} />
-        <Tooltip text={aiResult
-          ? 'AI-assessed content quality score (0\u2013100) combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze.'
-          : 'Estimated content score (0\u2013100) based on word count, sentence structure, and content substance. Click Analyze for a full AI-powered assessment.'
-        } />
-      </div>
+      {/* Ring Chart — only shown after AI analysis */}
+      {aiResult?.overallScore != null && (
+        <div className="flex items-center justify-center gap-2 mb-5">
+          <RingChart score={aiResult.overallScore} />
+          <Tooltip text="AI-assessed content quality score (0-100) combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze." />
+        </div>
+      )}
 
       {/* Quick Stats moved to editor toolbar — see SparkEditor.tsx EditorStatsBar */}
 
