@@ -349,13 +349,11 @@ function Section({
   return (
     <div className="mb-5 last:mb-0">
       <div className="flex items-center gap-1.5 mb-2.5">
-        <div className="flex items-center gap-1.5 rounded px-1 -ml-1 py-0.5 hover:bg-venus-gray-100 transition-colors" title={tooltip}>
-          <Icon size={14} className="text-venus-purple" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-venus-gray-500">
-            {title}
-          </h4>
-          {tooltip && <Info size={9} className="text-venus-gray-300" />}
-        </div>
+        <Icon size={14} className="text-venus-purple" />
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-venus-gray-500">
+          {title}
+        </h4>
+        {tooltip && <Tooltip text={tooltip} />}
         {sourceUrl && (
           <a
             href={sourceUrl}
@@ -787,51 +785,6 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     <div className="p-5">
       <h3 className="text-sm font-semibold text-venus-gray-700 mb-4">Content Scoring</h3>
 
-      {/* Analyze button */}
-      <button
-        onClick={analyze}
-        disabled={isAnalyzing || !hasContent}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-venus-purple hover:bg-venus-purple-deep disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-      >
-        {isAnalyzing ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            Analyzing…
-          </>
-        ) : (
-          <>
-            <Wand2 size={16} />
-            Analyze with Foundry AI
-          </>
-        )}
-      </button>
-
-      {/* Analysis progress steps */}
-      {isAnalyzing && analyzeSteps.length > 0 && (
-        <div className="mt-2 mb-3 rounded-lg border border-venus-gray-200 bg-surface-secondary overflow-hidden">
-          {analyzeSteps.map((step) => (
-            <div key={step.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-venus-gray-100 last:border-b-0">
-              {step.status === 'active' ? (
-                <Loader2 size={10} className="animate-spin text-venus-purple shrink-0" />
-              ) : (
-                <svg width="10" height="10" viewBox="0 0 16 16" className="text-venus-green shrink-0">
-                  <circle cx="8" cy="8" r="8" fill="currentColor" />
-                  <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-              <span className={`text-[10px] leading-tight ${step.status === 'active' ? 'text-venus-gray-600' : 'text-venus-gray-400'}`}>
-                {step.label}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Completed steps (expandable) */}
-      {!isAnalyzing && analyzeSteps.length > 0 && (
-        <ExpandableSteps steps={analyzeSteps} />
-      )}
-
       {errorMsg && (
         <div className="mb-4 text-xs text-red-500 bg-red-50 dark:bg-red-950/30 rounded-md px-3 py-2">
           {errorMsg}
@@ -983,6 +936,53 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           </div>
         </Section>
       )}
+
+      {/* Analyze button */}
+      <div className="mb-5">
+        <button
+          onClick={analyze}
+          disabled={isAnalyzing || !hasContent}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep disabled:opacity-50 text-white text-xs font-medium rounded-md transition-colors"
+        >
+          {isAnalyzing ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              Analyzing…
+            </>
+          ) : (
+            <>
+              <Wand2 size={12} />
+              Analyze with Foundry AI
+            </>
+          )}
+        </button>
+
+        {/* Analysis progress steps */}
+        {isAnalyzing && analyzeSteps.length > 0 && (
+          <div className="mt-2 rounded-lg border border-venus-gray-200 bg-surface-secondary overflow-hidden">
+            {analyzeSteps.map((step) => (
+              <div key={step.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-venus-gray-100 last:border-b-0">
+                {step.status === 'active' ? (
+                  <Loader2 size={10} className="animate-spin text-venus-purple shrink-0" />
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 16 16" className="text-venus-green shrink-0">
+                    <circle cx="8" cy="8" r="8" fill="currentColor" />
+                    <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+                <span className={`text-[10px] leading-tight ${step.status === 'active' ? 'text-venus-gray-600' : 'text-venus-gray-400'}`}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Completed steps (expandable) */}
+        {!isAnalyzing && analyzeSteps.length > 0 && (
+          <ExpandableSteps steps={analyzeSteps} />
+        )}
+      </div>
 
       {/* AI: Content Quality */}
       {aiResult ? (
