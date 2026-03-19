@@ -172,12 +172,22 @@ export async function POST(req: Request) {
         controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
+      // Send initial event immediately to prevent Nginx proxy timeout
+      send('step', { id: 'init', label: 'Starting analysis', status: 'active' });
+
+      // Keepalive: send a comment every 15s to prevent proxy idle timeout
+      const keepalive = setInterval(() => {
+        try { controller.enqueue(new TextEncoder().encode(': keepalive\n\n')); } catch { /* stream closed */ }
+      }, 15000);
+
       try {
         let lyticsTopics: FormattedTopic[] = [];
         let lyticsAudiences: FormattedAudience[] = [];
         let aggregateAffinities: AggregateAffinity[] = [];
         let lyticsContentRecs: LyticsContentEntity[] = [];
         let matchedOpportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[] = [];
+
+        send('step', { id: 'init', label: 'Starting analysis', status: 'done' });
 
         if (await isAvailable()) {
           // ── Step 1: Refresh Lytics data + classify content ──
@@ -346,6 +356,7 @@ You MUST call the submit_content_analysis tool with your analysis.`}`;
         addLogEntry({ service: 'anthropic', direction: 'response', level: 'error', summary: `lytics/analyze — ${message}` });
         send('error', { error: message });
       } finally {
+        clearInterval(keepalive);
         controller.close();
       }
     },
