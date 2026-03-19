@@ -18,6 +18,8 @@ import {
   Search,
   Info,
   ExternalLink,
+  ChevronDown,
+  Code,
 } from 'lucide-react';
 import { useEditorContext } from '@/lib/editor-context';
 import type { SparkItem, CanvasGroup } from '@/lib/types';
@@ -246,12 +248,15 @@ function QualityCard({
   label,
   score,
   tooltip,
+  explanation,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
   score: number;
   tooltip?: string;
+  explanation?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const color =
     score >= 80 ? 'text-venus-green' :
     score >= 60 ? 'text-venus-yellow' :
@@ -265,18 +270,30 @@ function QualityCard({
     'bg-venus-red';
 
   return (
-    <div className="rounded-lg border border-venus-gray-200 p-2.5" title={tooltip}>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Icon size={12} className="text-venus-gray-400" />
-        <span className="text-[10px] text-venus-gray-500 uppercase tracking-wider">{label}</span>
+    <div>
+      <div
+        className={`rounded-lg border border-venus-gray-200 p-2.5 ${explanation ? 'cursor-pointer' : ''}`}
+        title={tooltip}
+        onClick={explanation ? () => setOpen(!open) : undefined}
+      >
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Icon size={12} className="text-venus-gray-400" />
+          <span className="text-[10px] text-venus-gray-500 uppercase tracking-wider">{label}</span>
+          {explanation && <ChevronDown size={10} className={`ml-auto shrink-0 text-venus-gray-300 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />}
+        </div>
+        <div className={`text-lg font-bold ${color} mb-1`}>{score}</div>
+        <div className="w-full h-1 rounded-full bg-venus-gray-100 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+            style={{ width: `${score}%` }}
+          />
+        </div>
       </div>
-      <div className={`text-lg font-bold ${color} mb-1`}>{score}</div>
-      <div className="w-full h-1 rounded-full bg-venus-gray-100 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-          style={{ width: `${score}%` }}
-        />
-      </div>
+      {open && explanation && (
+        <div className="mt-1 mx-1 px-2.5 py-2 rounded bg-venus-gray-50 dark:bg-venus-gray-800/30 text-[10px] text-venus-gray-500 leading-relaxed border-l-2 border-venus-purple/30">
+          {explanation}
+        </div>
+      )}
     </div>
   );
 }
@@ -406,6 +423,44 @@ function LockedSection({
         <Lock size={11} />
         <span className="text-[10px]">Analyze to unlock</span>
       </div>
+    </div>
+  );
+}
+
+function ExplainableItem({ children, explanation }: { children: React.ReactNode; explanation: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <div
+        className="cursor-pointer group"
+        onClick={() => setOpen(!open)}
+      >
+        <div className="flex items-center gap-1">
+          <div className="flex-1 min-w-0">{children}</div>
+          <ChevronDown size={10} className={`shrink-0 text-venus-gray-300 group-hover:text-venus-gray-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+        </div>
+      </div>
+      {open && (
+        <div className="mt-1 ml-4 mr-1 px-2.5 py-2 rounded bg-venus-gray-50 dark:bg-venus-gray-800/30 text-[10px] text-venus-gray-500 leading-relaxed border-l-2 border-venus-purple/30">
+          {explanation}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RawDataBlock({ title, data, formula }: { title: string; data: Record<string, unknown>; formula?: string }) {
+  return (
+    <div className="mb-4">
+      <h5 className="text-[10px] font-semibold text-venus-gray-500 uppercase tracking-wider mb-1">{title}</h5>
+      {formula && (
+        <div className="mb-1.5 px-2 py-1 rounded bg-venus-purple/5 border border-venus-purple/10">
+          <code className="text-[9px] text-venus-purple font-mono">{formula}</code>
+        </div>
+      )}
+      <pre className="text-[9px] text-venus-gray-600 font-mono bg-venus-gray-50 dark:bg-venus-gray-800/30 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto border border-venus-gray-100">
+        {JSON.stringify(data, null, 2)}
+      </pre>
     </div>
   );
 }
@@ -796,6 +851,8 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     };
   }, [editorCtx, lyticsAvailable]);
 
+  const [showRawData, setShowRawData] = useState(false);
+
   const hasContent = !!mockScores;
 
   /* ── Idle state ── */
@@ -826,6 +883,17 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       <div className="flex items-center gap-2 mb-4">
         <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
         {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+        <button
+          onClick={() => setShowRawData(!showRawData)}
+          className={`ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+            showRawData
+              ? 'bg-venus-purple/10 text-venus-purple border-venus-purple/30'
+              : 'text-venus-gray-400 border-venus-gray-200 hover:border-venus-gray-400'
+          }`}
+        >
+          <Code size={9} />
+          {showRawData ? 'Visualizations' : 'Raw Data'}
+        </button>
       </div>
 
       {errorMsg && (
@@ -853,17 +921,27 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         sourceUrl={lyticsTopics.length > 0 ? lyticsUrl(lyticsAid, 'content/topics') : undefined}
         sourceLabel="Lytics"
       >
-        {lyticsTopics.length > 0 ? (
+        {showRawData ? (
+          <RawDataBlock
+            title="Topics"
+            data={{ topics: lyticsTopics, inferredTopics: lyticsInferredTopics } as unknown as Record<string, unknown>}
+            formula="POST /v2/content/enrich → topics{name: confidence 0-1} × 100"
+          />
+        ) : lyticsTopics.length > 0 ? (
           <div className="space-y-2.5">
             {lyticsTopics.slice(0, 8).map((t) => (
-              <EnhancedBar key={t.name} label={t.name} value={t.score} />
+              <ExplainableItem key={t.name} explanation={`"${t.name}" was identified by Lytics NLP with ${t.score}% confidence. This topic is extracted by running your editor text through Lytics' content enrichment pipeline (Diffbot + Google NLP + TextRazor + sentiment analysis). Higher confidence means your content strongly signals this subject, which affects which audience segments it aligns with.`}>
+                <EnhancedBar label={t.name} value={t.score} />
+              </ExplainableItem>
             ))}
             {lyticsInferredTopics.length > 0 && (
               <div className="mt-2 pt-2 border-t border-venus-gray-100">
                 <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-1.5">Inferred</p>
                 {lyticsInferredTopics.slice(0, 4).map((t) => (
                   <div key={t.name} className="opacity-60">
-                    <EnhancedBar label={t.name} value={t.score} />
+                    <ExplainableItem explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
+                      <EnhancedBar label={t.name} value={t.score} />
+                    </ExplainableItem>
                   </div>
                 ))}
               </div>
@@ -907,33 +985,43 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           sourceUrl={lyticsUrl(lyticsAid, 'segments')}
           sourceLabel="Lytics"
         >
-          <div className="space-y-2">
-            {lyticsAudiences.slice(0, 10).map((a) => {
-              const dotSize =
-                a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
-                a.size >= 1_000 ? 'w-2 h-2' :
-                'w-1.5 h-1.5';
+          {showRawData ? (
+            <RawDataBlock
+              title="Audiences"
+              data={{ audiences: lyticsAudiences } as unknown as Record<string, unknown>}
+              formula="POST /v2/content/align(topics) → cosine similarity → alignment × 100"
+            />
+          ) : (
+            <div className="space-y-2">
+              {lyticsAudiences.slice(0, 10).map((a) => {
+                const dotSize =
+                  a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
+                  a.size >= 1_000 ? 'w-2 h-2' :
+                  'w-1.5 h-1.5';
 
-              const alignColor =
-                a.alignment >= 80 ? 'bg-venus-green text-venus-green' :
-                a.alignment >= 60 ? 'bg-venus-yellow text-venus-yellow' :
-                'bg-venus-gray-300 text-venus-gray-500';
+                const alignColor =
+                  a.alignment >= 80 ? 'bg-venus-green text-venus-green' :
+                  a.alignment >= 60 ? 'bg-venus-yellow text-venus-yellow' :
+                  'bg-venus-gray-300 text-venus-gray-500';
 
-              return (
-                <div key={a.name} className="flex items-center gap-2">
-                  <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} title="Relative audience size" />
-                  <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
-                  <span className="text-[10px] text-venus-gray-400 shrink-0" title={`${a.size.toLocaleString()} profiles in this segment`}>{formatProfileCount(a.size)}</span>
-                  <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
-                    title={`${a.alignment}% topic overlap between your content and this audience's interests`}
-                  >
-                    {a.alignment}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+                return (
+                  <ExplainableItem key={a.name} explanation={`"${a.name}" has ${a.size.toLocaleString()} profiles and ${a.alignment}% alignment with your content. Alignment is computed by Lytics' content/align API using cosine similarity between your content's topic vector and the aggregate topic affinities of users in this segment. Higher alignment = this audience behaviorally engages with topics similar to what you're writing about.`}>
+                    <div className="flex items-center gap-2">
+                      <div className={`${dotSize} rounded-full bg-venus-purple/40 shrink-0`} title="Relative audience size" />
+                      <span className="text-xs text-venus-gray-600 truncate flex-1">{a.name}</span>
+                      <span className="text-[10px] text-venus-gray-400 shrink-0" title={`${a.size.toLocaleString()} profiles in this segment`}>{formatProfileCount(a.size)}</span>
+                      <span
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${alignColor.split(' ')[0]}/15 ${alignColor.split(' ')[1]}`}
+                        title={`${a.alignment}% topic overlap between your content and this audience's interests`}
+                      >
+                        {a.alignment}%
+                      </span>
+                    </div>
+                  </ExplainableItem>
+                );
+              })}
+            </div>
+          )}
         </Section>
       )}
 
@@ -946,31 +1034,41 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           sourceUrl={lyticsUrl(lyticsAid, 'content/topics')}
           sourceLabel="Lytics"
         >
-          <div className="space-y-2">
-            {lyticsOpportunity
-              .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
-              .slice(0, 5)
-              .map((o) => (
-                <div key={o.topic} className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs text-venus-gray-600 truncate">{o.topic}</span>
-                      <span className="text-[10px] text-venus-gray-400 shrink-0 ml-1" title="Opportunity score: higher = more users interested, fewer docs available">{o.opportunityScore}%</span>
+          {showRawData ? (
+            <RawDataBlock
+              title="Opportunity"
+              data={{ opportunity: lyticsOpportunity.filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase())) } as unknown as Record<string, unknown>}
+              formula="score = (userCount / maxUsers) × (1 - docCount / maxDocs) × 100"
+            />
+          ) : (
+            <div className="space-y-2">
+              {lyticsOpportunity
+                .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
+                .slice(0, 5)
+                .map((o) => (
+                  <ExplainableItem key={o.topic} explanation={`"${o.topic}" has ${o.userCount.toLocaleString()} interested users but only ${o.docCount} published docs. Opportunity score (${o.opportunityScore}%) = (userCount / maxUserCount) × (1 - docCount / maxDocCount). High score = many users interested, few docs available — a content gap worth filling.`}>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-xs text-venus-gray-600 truncate">{o.topic}</span>
+                          <span className="text-[10px] text-venus-gray-400 shrink-0 ml-1" title="Opportunity score: higher = more users interested, fewer docs available">{o.opportunityScore}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-venus-gray-100 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-venus-purple transition-all duration-500"
+                            style={{ width: `${o.opportunityScore}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-[9px] text-venus-gray-400 shrink-0 text-right leading-tight">
+                        <div title="Number of unique users with behavioral affinity for this topic">{o.userCount.toLocaleString()} users</div>
+                        <div title="Number of published content pieces covering this topic">{o.docCount} docs</div>
+                      </div>
                     </div>
-                    <div className="w-full h-1.5 rounded-full bg-venus-gray-100 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-venus-purple transition-all duration-500"
-                        style={{ width: `${o.opportunityScore}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-[9px] text-venus-gray-400 shrink-0 text-right leading-tight">
-                    <div title="Number of unique users with behavioral affinity for this topic">{o.userCount.toLocaleString()} users</div>
-                    <div title="Number of published content pieces covering this topic">{o.docCount} docs</div>
-                  </div>
-                </div>
-              ))}
-          </div>
+                  </ExplainableItem>
+                ))}
+            </div>
+          )}
         </Section>
       )}
 
@@ -1024,12 +1122,20 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       {/* AI: Content Quality */}
       {aiResult ? (
         <Section icon={Target} title="Content Quality" tooltip="AI-assessed quality metrics. Each score (0-100) evaluates a different dimension of your content's effectiveness. Run full analysis to generate these scores.">
-          <div className="grid grid-cols-2 gap-2">
-            <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." />
-            <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." />
-            <QualityCard icon={Sparkles} label="Engagement" score={aiResult.contentQuality.engagement} tooltip="How likely the content is to hold a reader's attention. Considers hooks, storytelling, actionable takeaways, and formatting variety." />
-            <QualityCard icon={Search} label="SEO" score={aiResult.contentQuality.seoReadiness} tooltip="How well-optimized the content is for search engines. Considers keyword presence, heading structure, meta-friendliness, and content depth." />
-          </div>
+          {showRawData ? (
+            <RawDataBlock
+              title="Quality"
+              data={{ quality: aiResult.contentQuality } as unknown as Record<string, unknown>}
+              formula="Claude claude-sonnet-4-6 tool_use → submit_content_analysis"
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." explanation={`Score: ${aiResult.contentQuality.readability}/100. AI-assessed using Claude's analysis of sentence length, vocabulary complexity, paragraph structure, and use of plain language. Scores above 70 indicate content accessible to a general business audience. Below 50 suggests overly complex or jargon-heavy writing.`} />
+              <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." explanation={`Score: ${aiResult.contentQuality.clarity}/100. Measures how clearly the content communicates its core message. Claude evaluates logical flow between paragraphs, specificity of claims, absence of ambiguity, and whether the reader can extract the main point quickly.`} />
+              <QualityCard icon={Sparkles} label="Engagement" score={aiResult.contentQuality.engagement} tooltip="How likely the content is to hold a reader's attention. Considers hooks, storytelling, actionable takeaways, and formatting variety." explanation={`Score: ${aiResult.contentQuality.engagement}/100. Predicts how well the content holds reader attention. Claude considers opening hooks, narrative structure, actionable takeaways, varied formatting (lists, headers, examples), and whether the content rewards the reader's time.`} />
+              <QualityCard icon={Search} label="SEO" score={aiResult.contentQuality.seoReadiness} tooltip="How well-optimized the content is for search engines. Considers keyword presence, heading structure, meta-friendliness, and content depth." explanation={`Score: ${aiResult.contentQuality.seoReadiness}/100. Evaluates search engine optimization readiness. Claude checks for keyword presence and density, heading hierarchy (H1→H2→H3), meta-description-friendly opening paragraph, internal/external linking opportunities, and content depth relative to the topic.`} />
+            </div>
+          )}
         </Section>
       ) : (
         <LockedSection icon={Target} title="Content Quality" />
@@ -1039,11 +1145,21 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       {/* AI: Channel Fit */}
       {aiResult ? (
         <Section icon={Radio} title="Channel Fit" tooltip="How well your content's format and style suits each distribution channel. Higher scores indicate a better natural fit. Use this to decide where to publish or how to adapt the content.">
-          <div className="space-y-2.5">
-            {[...aiResult.channelFit].sort((a, b) => b.score - a.score).map((ch) => (
-              <EnhancedBar key={ch.channel} label={ch.channel} value={ch.score} />
-            ))}
-          </div>
+          {showRawData ? (
+            <RawDataBlock
+              title="Channel Fit"
+              data={{ channelFit: [...aiResult.channelFit].sort((a, b) => b.score - a.score) } as unknown as Record<string, unknown>}
+              formula="Claude claude-sonnet-4-6 tool_use → submit_content_analysis.channelFit"
+            />
+          ) : (
+            <div className="space-y-2.5">
+              {[...aiResult.channelFit].sort((a, b) => b.score - a.score).map((ch) => (
+                <ExplainableItem key={ch.channel} explanation={`"${ch.channel}" fit: ${ch.score}%. AI-assessed by Claude based on content length, format, tone, and structure. ${ch.channel === 'Blog' ? 'Blogs favor 800-2000 word long-form with headers and images.' : ch.channel === 'Email' ? 'Email favors concise, scannable content with a clear CTA.' : ch.channel === 'Social' ? 'Social favors punchy, shareable snippets under 280 chars with hooks.' : ch.channel === 'Web Page' ? 'Web pages favor structured, scannable content with clear navigation and CTAs.' : 'Newsletters favor curated, multi-topic formats with brief summaries and links.'}`}>
+                  <EnhancedBar label={ch.channel} value={ch.score} />
+                </ExplainableItem>
+              ))}
+            </div>
+          )}
         </Section>
       ) : (
         <LockedSection icon={BarChart3} title="Channel Fit" />
@@ -1058,9 +1174,17 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           title="Lytics Gap Analysis"
           tooltip="AI comparison of your content against real Lytics audience data. Identifies what your content covers well, what\u2019s missing, and which audience interests aren\u2019t addressed."
         >
-          <p className="text-xs text-venus-gray-600 leading-relaxed">
-            {fullAnalysis.ai.contentComparison}
-          </p>
+          {showRawData ? (
+            <RawDataBlock
+              title="Gap Analysis"
+              data={{ contentComparison: fullAnalysis.ai.contentComparison } as unknown as Record<string, unknown>}
+              formula="Claude claude-sonnet-4-6 tool_use → submit_strategic_analysis.contentComparison"
+            />
+          ) : (
+            <p className="text-xs text-venus-gray-600 leading-relaxed">
+              {fullAnalysis.ai.contentComparison}
+            </p>
+          )}
         </Section>
       )}
 
@@ -1076,62 +1200,72 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           title="Strategic Recommendations"
           tooltip="AI-generated recommendations grounded in Lytics behavioral data. Content updates improve audience alignment. Campaign ideas leverage engagement patterns. Underserved audiences and content gaps are data-driven opportunities."
         >
-          {fullAnalysis.ai.recommendations.contentUpdates?.length > 0 && (
-            <div className="mb-3">
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Updates</h5>
-              <div className="space-y-1.5">
-                {fullAnalysis.ai.recommendations.contentUpdates.map((rec: string, i: number) => (
-                  <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
-                    <span className="text-venus-purple font-bold shrink-0">{i + 1}.</span>
-                    <span className="leading-relaxed">{rec}</span>
+          {showRawData ? (
+            <RawDataBlock
+              title="Recommendations"
+              data={fullAnalysis.ai.recommendations as unknown as Record<string, unknown>}
+              formula="Claude claude-sonnet-4-6 tool_use → submit_strategic_analysis.recommendations"
+            />
+          ) : (
+            <>
+              {fullAnalysis.ai.recommendations.contentUpdates?.length > 0 && (
+                <div className="mb-3">
+                  <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Updates</h5>
+                  <div className="space-y-1.5">
+                    {fullAnalysis.ai.recommendations.contentUpdates.map((rec: string, i: number) => (
+                      <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
+                        <span className="text-venus-purple font-bold shrink-0">{i + 1}.</span>
+                        <span className="leading-relaxed">{rec}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {fullAnalysis.ai.recommendations.campaignIdeas?.length > 0 && (
-            <div className="mb-3">
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Campaign Ideas</h5>
-              <div className="space-y-1.5">
-                {fullAnalysis.ai.recommendations.campaignIdeas.map((idea: string, i: number) => (
-                  <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
-                    <span className="text-venus-green font-bold shrink-0">→</span>
-                    <span className="leading-relaxed">{idea}</span>
+                </div>
+              )}
+              {fullAnalysis.ai.recommendations.campaignIdeas?.length > 0 && (
+                <div className="mb-3">
+                  <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Campaign Ideas</h5>
+                  <div className="space-y-1.5">
+                    {fullAnalysis.ai.recommendations.campaignIdeas.map((idea: string, i: number) => (
+                      <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
+                        <span className="text-venus-green font-bold shrink-0">→</span>
+                        <span className="leading-relaxed">{idea}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {fullAnalysis.ai.recommendations.underservedAudiences?.length > 0 && (
-            <div className="mb-3">
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Underserved Audiences</h5>
-              <div className="space-y-2">
-                {fullAnalysis.ai.recommendations.underservedAudiences.map((a: { name: string; size: number; gap: string; suggestion: string }, i: number) => (
-                  <div key={i} className="rounded-lg border border-venus-gray-200 p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-venus-gray-700">{a.name}</span>
-                      <span className="text-[10px] text-venus-gray-400">{formatProfileCount(a.size)}</span>
-                    </div>
-                    <p className="text-[10px] text-venus-gray-500 mb-0.5">{a.gap}</p>
-                    <p className="text-[10px] text-venus-purple">{a.suggestion}</p>
+                </div>
+              )}
+              {fullAnalysis.ai.recommendations.underservedAudiences?.length > 0 && (
+                <div className="mb-3">
+                  <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Underserved Audiences</h5>
+                  <div className="space-y-2">
+                    {fullAnalysis.ai.recommendations.underservedAudiences.map((a: { name: string; size: number; gap: string; suggestion: string }, i: number) => (
+                      <div key={i} className="rounded-lg border border-venus-gray-200 p-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-medium text-venus-gray-700">{a.name}</span>
+                          <span className="text-[10px] text-venus-gray-400">{formatProfileCount(a.size)}</span>
+                        </div>
+                        <p className="text-[10px] text-venus-gray-500 mb-0.5">{a.gap}</p>
+                        <p className="text-[10px] text-venus-purple">{a.suggestion}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {fullAnalysis.ai.recommendations.contentGaps?.length > 0 && (
-            <div>
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Gaps</h5>
-              <div className="space-y-1.5">
-                {fullAnalysis.ai.recommendations.contentGaps.map((g: { topic: string; userCount: number; docCount: number; opportunity: string }, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-venus-gray-600">
-                    <span className="text-venus-yellow font-bold shrink-0">!</span>
-                    <span className="truncate flex-1">{g.topic}</span>
-                    <span className="text-[10px] text-venus-gray-400 shrink-0">{g.userCount.toLocaleString()} users / {g.docCount} docs</span>
+                </div>
+              )}
+              {fullAnalysis.ai.recommendations.contentGaps?.length > 0 && (
+                <div>
+                  <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Content Gaps</h5>
+                  <div className="space-y-1.5">
+                    {fullAnalysis.ai.recommendations.contentGaps.map((g: { topic: string; userCount: number; docCount: number; opportunity: string }, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-xs text-venus-gray-600">
+                        <span className="text-venus-yellow font-bold shrink-0">!</span>
+                        <span className="truncate flex-1">{g.topic}</span>
+                        <span className="text-[10px] text-venus-gray-400 shrink-0">{g.userCount.toLocaleString()} users / {g.docCount} docs</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
+            </>
           )}
         </Section>
       )}
