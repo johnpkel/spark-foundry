@@ -322,7 +322,7 @@ function Tooltip({ text }: { text: string }) {
         <Info size={10} />
       </button>
       {show && (
-        <div className="absolute right-0 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-50 pointer-events-none">
+        <div className="absolute right-0 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-[100] pointer-events-none">
           {text}
           <div className="absolute right-3 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-venus-gray-700" />
         </div>
@@ -393,6 +393,15 @@ function LockedSection({
       </div>
     </div>
   );
+}
+
+function timeAgo(ts: number): string {
+  if (!ts) return '';
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 function lyticsUrl(aid: string, path: string): string | undefined {
@@ -483,6 +492,10 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>(initialLyticsCache?.opportunity ?? []);
   const [isEnriching, setIsEnriching] = useState(false);
   const [lyticsAid, setLyticsAid] = useState(initialLyticsCache?.aid ?? '');
+  const [lastFetchedAt, setLastFetchedAt] = useState<number>(
+    initialLyticsCache?.lastUpdated ? new Date(initialLyticsCache.lastUpdated).getTime() : 0
+  );
+  const [, setTick] = useState(0); // force re-render for relative time
 
   const enrichDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const lastEnrichedTextRef = useRef('');
@@ -630,6 +643,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               if (data.ai?.qualityAnalysis) setAiResult(data.ai.qualityAnalysis);
               setFullAnalysis(data);
               setErrorMsg('');
+              setLastFetchedAt(Date.now());
               persistLyticsCache({
                 topics: data.lytics?.topics ?? lyticsTopics,
                 inferredTopics: lyticsInferredTopics,
@@ -677,6 +691,12 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
     };
   }, [editorCtx, updateMockScores]);
 
+  // Tick every 30s to keep relative timestamp fresh
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Fetch cached Lytics data on mount
   useEffect(() => {
     fetch('/api/lytics/data')
@@ -685,6 +705,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         if (data.available) {
           setLyticsAvailable(true);
           if (data.aid) setLyticsAid(String(data.aid));
+          setLastFetchedAt(Date.now());
           if (data.opportunity?.length) {
             const topics = data.opportunity
               .filter((t: Record<string, unknown>) => {
@@ -739,6 +760,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             if (data.inferredTopics) setLyticsInferredTopics(data.inferredTopics);
             if (data.audiences) setLyticsAudiences(data.audiences);
             // Persist to Spark metadata
+            setLastFetchedAt(Date.now());
             persistLyticsCache({
               topics: data.topics, inferredTopics: data.inferredTopics,
               audiences: data.audiences, aid: lyticsAid,
@@ -765,7 +787,10 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   if (!hasContent && !aiResult) {
     return (
       <div className="p-5">
-        <h3 className="text-sm font-semibold text-venus-gray-700 mb-5">Content Scoring</h3>
+        <div className="flex items-center gap-2 mb-5">
+          <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
+          {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+        </div>
         <div className="text-center py-12">
           <div className="w-12 h-12 rounded-xl bg-venus-gray-100 flex items-center justify-center mx-auto mb-3">
             <FileText size={20} className="text-venus-gray-400" />
@@ -783,7 +808,10 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
   return (
     <div className="p-5">
-      <h3 className="text-sm font-semibold text-venus-gray-700 mb-4">Content Scoring</h3>
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
+        {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+      </div>
 
       {errorMsg && (
         <div className="mb-4 text-xs text-red-500 bg-red-50 dark:bg-red-950/30 rounded-md px-3 py-2">
@@ -952,7 +980,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           ) : (
             <>
               <Wand2 size={12} />
-              Analyze with Foundry AI
+              Run full analysis
             </>
           )}
         </button>
