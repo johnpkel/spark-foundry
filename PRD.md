@@ -1,6 +1,6 @@
 # Spark Foundry — Product Requirements Document
 
-> **Last updated:** 2026-03-10
+> **Last updated:** 2026-03-19
 > **Version:** 1.0
 > **Status:** Living document — updated via `/update-prd` skill
 
@@ -42,11 +42,14 @@ The primary workspace is organized into:
 - **Canvas** — React Flow node graph with swimlane layout, draggable groups, floating chat
 
 **Right Drawer Tabs:**
-- **Discussions** — Comment threads on selected editor text
-- **Scoring** — Content quality analysis (topics, audiences, readability, SEO, channel fit)
+
+| Tab | Description |
+|---|---|
+| Discussions | Comment threads on selected editor text |
+| Scoring | Lytics-powered content scoring with audience fit, topic analysis, content opportunity, AI quality assessment, and strategic recommendations |
 
 **Header:**
-- Spark name, integration status menu, theme toggle, activity log button, presence avatars
+- Spark name, presence avatars, integration status, primary domains config, generate button, activity log button
 
 ---
 
@@ -206,6 +209,7 @@ The chat uses **SSE streaming** with **Anthropic Claude Sonnet 4.6** and a tool-
 | `scrape_url` | Deep-read a specific URL for detailed content |
 | `web_search` | Internet search via Anthropic hosted tool (max 10/session) |
 | `save_web_research` | Persist web research as a new spark item with embedding |
+| `lytics_insights` | Query Lytics CDP data — segments, opportunity landscape, content alignment, profile affinities |
 
 ### 5.3 Session Management
 
@@ -281,7 +285,26 @@ The chat uses **SSE streaming** with **Anthropic Claude Sonnet 4.6** and a tool-
 - **Auth:** Built-in Anthropic tool (no separate auth)
 - **Capability:** Internet search during chat (max 10 uses per session)
 
-### 7.6 Integration Status
+### 7.6 Lytics (Audience Intelligence)
+
+- **Auth:** API token (`LYTICS_ACCESS_TOKEN` in `.env.local`)
+- **Capabilities:**
+  - Real-time content topic classification via NLP enrichment pipeline
+  - Audience alignment scoring (cosine similarity against behavioral segments)
+  - Content opportunity analysis (800+ topics with behavioral scores)
+  - Aggregate profile affinity sampling
+  - Content entity lookup for primary domain URLs
+- **Architecture:** Ambient data layer — cached in-memory singleton, refreshed on load and editor changes
+- **API Endpoints Used:**
+  - `POST /v2/content/enrich` — classify text into topics
+  - `POST /v2/content/align` — match topics to audience segments
+  - `GET /v2/content/opportunity` — behavioral scores across topic landscape
+  - `GET /v2/segment?sizes=true` — audience segments with profile counts
+  - `GET /v2/segment/group` — segment categorization
+  - `GET /api/segment/{id}/scan` — profile sampling (v1 only)
+  - `GET /v2/content/entity` — indexed content lookup
+
+### 7.7 Integration Status
 
 All integrations expose a unified status endpoint (`GET /api/integrations/status`) returning `connected`, `active`, or `not_configured` per service.
 
@@ -336,17 +359,115 @@ Bold, italic, strikethrough, code, headings (1-3), bullet/ordered lists, blockqu
 
 ---
 
-## 10. Content Scoring & Analysis
+## 10. Content Scoring & Lytics Data Service
 
-- **Endpoint:** `POST /api/scoring/analyze`
-- **Engine:** Claude Vision with tool use
-- **Metrics:**
-  - Overall quality score (0-100)
-  - Topic extraction
-  - Audience identification
-  - Quality dimensions: readability, clarity, engagement, SEO
-  - Channel fit assessment
-- **UI:** Score Panel in right drawer with visual indicators
+Content Scoring is a three-layer system combining real-time Lytics audience intelligence with AI-powered quality analysis.
+
+### 10.1 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     LYTICS DATA SERVICE (Ambient Layer)                  │
+│                     Singleton cache · Refreshes on load + edit + analyze │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │  Segments     │  │ Seg. Groups  │  │ Opportunity   │  │  Content   │  │
+│  │  /v2/segment  │  │ /v2/segment/ │  │ /v2/content/  │  │  Topics    │  │
+│  │  ?sizes=true  │  │ group        │  │ opportunity   │  │  (editor)  │  │
+│  │              │  │              │  │              │  │            │  │
+│  │  Audience     │  │  Category    │  │  ~800 topics  │  │  Enrich +  │  │
+│  │  definitions  │  │  groupings   │  │  × 19 dims:   │  │  Align     │  │
+│  │  + profile    │  │  for filter  │  │  behavioral   │  │  results   │  │
+│  │  counts       │  │              │  │  scores,      │  │            │  │
+│  │              │  │              │  │  engagement,   │  │            │  │
+│  │              │  │              │  │  models,       │  │            │  │
+│  │              │  │              │  │  prevalence    │  │            │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘  │
+│         │                 │                 │                 │         │
+│         └─────────────────┴────────┬────────┴─────────────────┘         │
+│                                    │                                    │
+│                          ┌─────────▼─────────┐                         │
+│                          │   In-Memory Cache  │                         │
+│                          │   (LyticsCache)    │                         │
+│                          │                    │                         │
+│                          │   Persisted to     │                         │
+│                          │   sparks.metadata  │                         │
+│                          │   .lyticsCache     │                         │
+│                          └─────────┬─────────┘                         │
+└────────────────────────────────────┼────────────────────────────────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+         ┌──────────▼──┐   ┌────────▼───────┐  ┌────▼────────────┐
+         │  Layer 1     │   │   Layer 2       │  │   Layer 3       │
+         │  Always-On   │   │   Full Analysis │  │   Chat Tools    │
+         │              │   │                 │  │                 │
+         │ ScorePanel   │   │ POST /api/      │  │ lytics_insights │
+         │ renders from │   │ lytics/analyze  │  │ tool in chat    │
+         │ cache on     │   │                 │  │ agent           │
+         │ every edit   │   │ SSE streaming   │  │                 │
+         └──────────────┘   └────────┬────────┘  └─────────────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+              ┌─────▼─────┐  ┌──────▼──────┐  ┌─────▼──────────┐
+              │  Lytics    │  │  Claude AI   │  │  Profile       │
+              │  Refresh   │  │  Analysis    │  │  Sampling      │
+              │            │  │              │  │                │
+              │  Segments  │  │  Two tools:  │  │  /api/segment/ │
+              │  Opportunity│  │  quality +   │  │  {id}/scan     │
+              │  Enrich    │  │  strategic   │  │  (top 5        │
+              │  Align     │  │              │  │  audiences)    │
+              └────────────┘  └──────────────┘  └────────────────┘
+```
+
+### 10.2 Three Layers
+
+**Layer 1 — Always-On (no button click required):**
+- Lytics Topics: NLP topic classification via `/v2/content/enrich`, debounced 2s on editor changes
+- Audience Fit: Cosine similarity alignment via `/v2/content/align`, ranked by alignment %
+- Content Opportunity: Topic landscape from `/v2/content/opportunity`, scored by `(userCount/maxUsers) × (1 - docCount/maxDocs)`
+
+**Layer 2 — Full Analysis (on "Run full analysis" click):**
+- Refreshes all Lytics data + editor enrichment in parallel
+- Samples aggregate profile affinities from top 5 aligned segments
+- Passes full Lytics context to Claude via structured system prompt injection
+- Claude calls two tools:
+  - `submit_content_analysis` → quality scores (readability, clarity, engagement, SEO), channel fit
+  - `submit_strategic_analysis` → gap analysis, content updates, campaign ideas, underserved audiences, content gaps
+- Results streamed via SSE with real-time step progress
+
+**Layer 3 — Chat Integration:**
+- `lytics_insights` tool available to chat agent
+- Supports queries: segments, opportunity, content_alignment, profile_affinities
+- Reads from cached data service (no additional API calls for cached data)
+
+### 10.3 Primary Domains
+
+Each Spark has a configurable `primaryDomains` list (stored in `sparks.metadata.primaryDomains`). This anchors the Spark to specific websites:
+- Scopes Lytics content entity lookups to indexed domains
+- Prevents 404s on non-indexed URLs (Google Docs, Slack, etc.)
+- Configurable via globe icon in workspace header
+
+### 10.4 Persistence
+
+Scoring data persists across sessions in `sparks.metadata.lyticsCache`:
+- Topics, audiences, opportunity data, full analysis results
+- Hydrated instantly on Spark load (no loading state)
+- Replaced as fresh data arrives
+- Uses `metadata_merge` PATCH to avoid overwriting concurrent writes
+
+### 10.5 UI Features
+
+- **Expandable explanations** on every metric (click chevron to see data source, formula, and significance)
+- **Raw Data toggle** shows underlying JSON, API endpoints, tool schemas, and formulas
+- **Expand All / Collapse All** toggle for all explanations
+- **Source links** to Lytics UI (`app.lytics.com/a/{aid}/...`)
+- **Tooltips** on section headers explaining each metric category
+- **Analysis progress steps** shown via SSE during full analysis (replaces spinner)
+- **Collapsible AI summary**
+- **Content score ring** (bottom of panel, only after full analysis)
+- **Editor stats bar** (word count, sentences, readability below toolbar)
 
 ---
 
@@ -357,7 +478,7 @@ Bold, italic, strikethrough, code, headings (1-3), bullet/ordered lists, blockqu
 - **Singleton:** `addLogEntry()` with 500-entry circular buffer
 - **Broadcasting:** EventEmitter → SSE to all connected clients
 - **Instrumentation:** `traceFetch()` wrapper auto-logs all external API calls
-- **Services tracked:** Anthropic, Voyage AI, Supabase, Contentstack, Google, Slack, Clarity, Internal
+- **Services tracked:** Anthropic, Voyage AI, Supabase, Contentstack, Google, Slack, Clarity, Lytics, Internal
 
 ### Client-Side
 
@@ -444,4 +565,4 @@ sparks
 
 - **Platform:** Contentstack Launch (Nginx reverse proxy)
 - **SSE compatibility:** Headers configured for Nginx buffering bypass
-- **Environment variables:** API keys for Anthropic, Voyage AI, Supabase, Contentstack, Google, Slack, Clarity
+- **Environment variables:** API keys for Anthropic, Voyage AI, Supabase, Contentstack, Google, Slack, Clarity, Lytics

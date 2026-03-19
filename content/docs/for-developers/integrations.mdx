@@ -94,6 +94,25 @@ The scraper (`src/lib/scraper.ts`) extracts:
 - Open Graph metadata
 - Image URLs
 
+### Lytics (Audience Intelligence)
+
+**API Client** (`src/lib/lytics/api.ts`):
+- All calls instrumented with `traceFetch()` for the activity log
+- Auth via `Authorization: {LYTICS_ACCESS_TOKEN}` header
+- Key endpoints: `/v2/content/enrich`, `/v2/content/align`, `/v2/content/opportunity`, `/v2/segment`
+
+**Data Service** (`src/lib/lytics/data-service.ts`):
+- Process-level singleton (same pattern as `activity-logger.ts`)
+- Caches segments, segment groups, opportunity data, and per-editor enrichment results
+- Refreshes on Spark load, editor changes (2s debounce), and full analysis runs
+
+**Content Scoring** (`src/components/ScorePanel.tsx`):
+- Layer 1: Always-on — renders from cache on every editor change (topics, audience fit, opportunity)
+- Layer 2: Full analysis — refreshes Lytics + samples profile affinities + calls Claude with two tools
+- Layer 3: Chat — `lytics_insights` tool gives the agent access to all cached Lytics data
+
+See the [Content Scoring & Lytics Integration](/docs/for-developers/content-scoring) page for full architecture details.
+
 ### Adding a New Integration
 
 1. Add an entry to `INTEGRATIONS` array in `src/lib/integrations.ts`

@@ -1,0 +1,195 @@
+---
+title: Content Scoring & Lytics Integration
+description: How the Lytics Data Service, Content Scoring panel, and AI analysis pipeline work together to provide audience-aware content intelligence.
+---
+
+## Overview
+
+Content Scoring combines real-time Lytics CDP data with Claude AI analysis to evaluate content against actual audience behavioral data. The system operates as three layers — an always-on ambient data layer, a full on-demand analysis pipeline, and a chat tool integration — all backed by a singleton in-memory cache that persists across sessions.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     LYTICS DATA SERVICE (Ambient Layer)                  │
+│                     Singleton cache · Refreshes on load + edit + analyze │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │  Segments     │  │ Seg. Groups  │  │ Opportunity   │  │  Content   │  │
+│  │  /v2/segment  │  │ /v2/segment/ │  │ /v2/content/  │  │  Topics    │  │
+│  │  ?sizes=true  │  │ group        │  │ opportunity   │  │  (editor)  │  │
+│  │              │  │              │  │              │  │            │  │
+│  │  Audience     │  │  Category    │  │  ~800 topics  │  │  Enrich +  │  │
+│  │  definitions  │  │  groupings   │  │  × 19 dims:   │  │  Align     │  │
+│  │  + profile    │  │  for filter  │  │  behavioral   │  │  results   │  │
+│  │  counts       │  │              │  │  scores,      │  │            │  │
+│  │              │  │              │  │  engagement,   │  │            │  │
+│  │              │  │              │  │  models,       │  │            │  │
+│  │              │  │              │  │  prevalence    │  │            │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘  │
+│         │                 │                 │                 │         │
+│         └─────────────────┴────────┬────────┴─────────────────┘         │
+│                                    │                                    │
+│                          ┌─────────▼─────────┐                         │
+│                          │   In-Memory Cache  │                         │
+│                          │   (LyticsCache)    │                         │
+│                          │                    │                         │
+│                          │   Persisted to     │                         │
+│                          │   sparks.metadata  │                         │
+│                          │   .lyticsCache     │                         │
+│                          └─────────┬─────────┘                         │
+└────────────────────────────────────┼────────────────────────────────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+         ┌──────────▼──┐   ┌────────▼───────┐  ┌────▼────────────┐
+         │  Layer 1     │   │   Layer 2       │  │   Layer 3       │
+         │  Always-On   │   │   Full Analysis │  │   Chat Tools    │
+         │              │   │                 │  │                 │
+         │ ScorePanel   │   │ POST /api/      │  │ lytics_insights │
+         │ renders from │   │ lytics/analyze  │  │ tool in chat    │
+         │ cache on     │   │                 │  │ agent           │
+         │ every edit   │   │ SSE streaming   │  │                 │
+         └──────────────┘   └────────┬────────┘  └─────────────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    │                │                │
+              ┌─────▼─────┐  ┌──────▼──────┐  ┌─────▼──────────┐
+              │  Lytics    │  │  Claude AI   │  │  Profile       │
+              │  Refresh   │  │  Analysis    │  │  Sampling      │
+              │            │  │              │  │                │
+              │  Segments  │  │  Two tools:  │  │  /api/segment/ │
+              │  Opportunity│  │  quality +   │  │  {id}/scan     │
+              │  Enrich    │  │  strategic   │  │  (top 5        │
+              │  Align     │  │              │  │  audiences)    │
+              └────────────┘  └──────────────┘  └────────────────┘
+```
+
+## Lytics Data Service
+
+### Singleton Cache Pattern
+
+The `LyticsDataService` (`src/lib/lytics/data-service.ts`) is a process-level singleton that caches Lytics data in memory. It follows the same pattern as `activity-logger.ts` — a module-level instance exported for import by any route or component.
+
+### Cached Data Slices
+
+| Slice | Endpoint | Refresh | Purpose |
+|---|---|---|---|
+| Segments | `GET /v2/segment?sizes=true` | Load + Analyze | Audience definitions with profile counts |
+| Segment Groups | `GET /v2/segment/group` | Load | Category groupings |
+| Opportunity | `GET /v2/content/opportunity` | Load + Analyze | ~800 topics × 19 behavioral dimensions |
+| Content Topics | `POST /v2/content/enrich` | Editor change (2s debounce) + Analyze | NLP topic classification |
+| Audience Alignment | `POST /v2/content/align` | Editor change + Analyze | Cosine similarity to segments |
+| Profile Affinities | `GET /api/segment/{id}/scan` | Analyze only (5s timeout) | Sampled topic affinities |
+| Content Entities | `GET /v2/content/entity` | Analyze (primary domain URLs only) | Pre-enriched content |
+
+### API Client
+
+All Lytics API calls go through `src/lib/lytics/api.ts`, which wraps each call in `traceFetch()` for activity log instrumentation. Auth uses the `Authorization` header with `LYTICS_ACCESS_TOKEN`.
+
+Key methods:
+- `enrichContent(text)` — POST form-encoded to `/v2/content/enrich` (max 2000 chars)
+- `alignContent(topics)` — POST JSON to `/v2/content/align`
+- `getOpportunity()` — GET `/v2/content/opportunity`
+- `getSegments(sizes?)` — GET `/v2/segment`
+- `scanSegment(id, limit)` — GET `/api/segment/{id}/scan` (v1 only, 5s timeout)
+- `getContentByUrl(url)` — GET `/v2/content/entity`
+
+## Content Opportunity Data Model
+
+The `/v2/content/opportunity` endpoint returns ~800 topics, each with 19 dimensions:
+
+**Behavioral Segments (proportions 0-1):**
+`deeply_engaged_users`, `frequent_users`, `binge_users`, `at_risk_users`, `casual_visitors`, `perusers`
+
+**Behavioral Scores (0-100):**
+`score_recency`, `score_frequency`, `score_intensity`, `score_momentum`, `score_quantity`, `score_volatility`, `score_consistency`, `score_maturity`, `score_propensity`
+
+**Look-alike Models (0-1):**
+`model_Exploration to Immersion`, `model_all::nb_enter_closed_won_within_last_year`
+
+**Counts:**
+`User Count` (users interested), `Document Count` (published content)
+
+**Opportunity Score Formula:**
+```
+score = (userCount / maxUserCount) × (1 - docCount / maxDocCount) × 100
+```
+
+High user interest + low existing content = high opportunity.
+
+## ScorePanel UI
+
+### Layer 1 — Always-On Sections
+
+These render from cache without any button click:
+
+**1. Lytics Topics** — `POST /v2/content/enrich` classifies editor text. Scores = classification confidence (0-100). High-confidence and inferred topics shown separately.
+
+**2. Audience Fit** — `POST /v2/content/align` maps topics to segments via cosine similarity. Shows segment name, alignment %, and profile count.
+
+**3. Content Opportunity** — Filters cached opportunity data to topics matching current content. Shows opportunity score, user count, and doc count.
+
+### Layer 2 — Full Analysis
+
+Triggered by "Run full analysis" button. The `/api/lytics/analyze` route:
+
+1. Refreshes global Lytics data + enriches content (parallel)
+2. Samples aggregate profile affinities from top 5 aligned segments
+3. Looks up content entities for primary domain URLs
+4. Builds structured Lytics context for Claude's system prompt
+5. Calls Claude with two tools: `submit_content_analysis` + `submit_strategic_analysis`
+6. Streams progress steps via SSE
+
+**Claude Tool: `submit_content_analysis`**
+- `overallScore` (0-100)
+- `contentQuality`: `readability`, `clarity`, `engagement`, `seoReadiness` (each 0-100)
+- `channelFit`: `[{channel, score}]` for Blog, Email, Social, Web Page, Newsletter
+
+**Claude Tool: `submit_strategic_analysis`** (only when Lytics data present)
+- `contentComparison`: free-text gap analysis
+- `recommendations.contentUpdates`: `string[]`
+- `recommendations.campaignIdeas`: `string[]`
+- `recommendations.underservedAudiences`: `[{name, size, gap, suggestion}]`
+- `recommendations.contentGaps`: `[{topic, userCount, docCount, opportunity}]`
+
+## API Routes
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/lytics/data` | GET | Return cached Lytics state (segments, groups, opportunity) |
+| `/api/lytics/enrich` | POST | Debounced editor enrichment (topics + audiences) |
+| `/api/lytics/analyze` | POST (SSE) | Full analysis with Lytics refresh + Claude AI |
+
+## Chat Integration
+
+The `lytics_insights` tool in `src/lib/agent/tools-registry.ts` gives the chat agent access to cached Lytics data:
+
+| Query Type | What It Returns |
+|---|---|
+| `segments` | Audience list with sizes, filterable by name |
+| `opportunity` | Topic landscape with behavioral scores, filterable by topic |
+| `content_alignment` | Classify provided text and return matching audiences |
+| `profile_affinities` | Cached content topics and audience alignment |
+
+## Persistence
+
+Scoring data persists in `sparks.metadata.lyticsCache` (Supabase JSONB):
+- Hydrated on mount from initial props
+- Saved after enrich responses and full analysis (debounced 1s)
+- Uses `metadata_merge` PATCH to avoid overwriting concurrent metadata writes
+
+## Primary Domains
+
+Stored in `sparks.metadata.primaryDomains`. Configurable via globe icon in header. Used to filter content entity lookups — only URLs matching primary domains are looked up in the Lytics content index. This prevents 404s on non-indexed URLs such as Google Docs or Slack permalinks.
+
+## File Map
+
+| File | Purpose |
+|---|---|
+| `src/lib/lytics/types.ts` | TypeScript types for all Lytics data models |
+| `src/lib/lytics/api.ts` | Lytics v2 API client (traceFetch instrumented) |
+| `src/lib/lytics/data-service.ts` | Singleton cache + refresh orchestration |
+| `src/app/api/lytics/data/route.ts` | GET cached state |
+| `src/app/api/lytics/enrich/route.ts` | POST editor enrichment |
+| `src/app/api/lytics/analyze/route.ts` | POST full analysis (SSE) |
+| `src/components/ScorePanel.tsx` | Three-layer scoring UI |
+| `src/components/PrimaryDomains.tsx` | Domain config popover |
