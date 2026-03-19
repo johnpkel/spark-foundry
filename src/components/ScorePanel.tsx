@@ -310,19 +310,34 @@ function QuickStats({
 
 function Tooltip({ text }: { text: string }) {
   const [show, setShow] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const handleEnter = () => {
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.top - 6, right: window.innerWidth - rect.right });
+    }
+    setShow(true);
+  };
+
   return (
-    <span className="relative inline-flex">
+    <span className="inline-flex">
       <button
-        onMouseEnter={() => setShow(true)}
+        ref={btnRef}
+        onMouseEnter={handleEnter}
         onMouseLeave={() => setShow(false)}
-        onClick={(e) => { e.stopPropagation(); setShow(!show); }}
+        onClick={(e) => { e.stopPropagation(); if (!show) handleEnter(); else setShow(false); }}
         className="p-0.5 rounded hover:bg-venus-gray-100 text-venus-gray-400 hover:text-venus-gray-600 transition-colors"
         aria-label="Info"
       >
         <Info size={10} />
       </button>
-      {show && (
-        <div className="absolute right-0 bottom-full mb-1.5 w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg z-[100] pointer-events-none">
+      {show && pos && (
+        <div
+          className="fixed w-56 px-2.5 py-2 rounded-lg bg-venus-gray-700 text-[10px] text-white leading-relaxed shadow-lg pointer-events-none"
+          style={{ top: pos.top, right: pos.right, transform: 'translateY(-100%)', zIndex: 9999 }}
+        >
           {text}
           <div className="absolute right-3 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-venus-gray-700" />
         </div>

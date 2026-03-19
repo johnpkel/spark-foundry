@@ -465,7 +465,6 @@ function SparkWorkspacePage() {
             <BookOpen size={14} />
           </a>
           <ActivityLogButton />
-          <ThemeToggle />
         </div>
       </header>
 
