@@ -1124,9 +1124,26 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         <Section icon={Target} title="Content Quality" tooltip="AI-assessed quality metrics. Each score (0-100) evaluates a different dimension of your content's effectiveness. Run full analysis to generate these scores.">
           {showRawData ? (
             <RawDataBlock
-              title="Quality"
-              data={{ quality: aiResult.contentQuality } as unknown as Record<string, unknown>}
-              formula="Claude claude-sonnet-4-6 tool_use → submit_content_analysis"
+              title="submit_content_analysis"
+              data={{
+                _tool: 'submit_content_analysis',
+                _model: 'claude-sonnet-4-6',
+                _method: 'Anthropic Messages API → tool_use',
+                _description: 'Claude analyzes editor content and returns structured quality scores via a forced tool call. The tool schema defines the response shape — Claude cannot deviate from it.',
+                _schema: {
+                  overallScore: 'number (0-100) — weighted composite of all quality dimensions',
+                  contentQuality: {
+                    readability: 'number (0-100) — sentence length, vocabulary complexity, paragraph structure, plain language usage',
+                    clarity: 'number (0-100) — logical flow, specificity of claims, absence of ambiguity',
+                    engagement: 'number (0-100) — hooks, narrative structure, actionable takeaways, formatting variety',
+                    seoReadiness: 'number (0-100) — keyword density, heading hierarchy, meta-friendliness, content depth',
+                  },
+                  channelFit: '[{channel, score}] — fit assessment per distribution channel',
+                },
+                result: aiResult.contentQuality,
+                overallScore: aiResult.overallScore,
+              } as unknown as Record<string, unknown>}
+              formula="anthropic.messages.create({ model: 'claude-sonnet-4-6', tools: [submit_content_analysis], max_tokens: 4096 }) → response.content.find(b => b.name === 'submit_content_analysis').input"
             />
           ) : (
             <div className="grid grid-cols-2 gap-2">
@@ -1147,9 +1164,22 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         <Section icon={Radio} title="Channel Fit" tooltip="How well your content's format and style suits each distribution channel. Higher scores indicate a better natural fit. Use this to decide where to publish or how to adapt the content.">
           {showRawData ? (
             <RawDataBlock
-              title="Channel Fit"
-              data={{ channelFit: [...aiResult.channelFit].sort((a, b) => b.score - a.score) } as unknown as Record<string, unknown>}
-              formula="Claude claude-sonnet-4-6 tool_use → submit_content_analysis.channelFit"
+              title="submit_content_analysis.channelFit"
+              data={{
+                _tool: 'submit_content_analysis',
+                _field: 'channelFit',
+                _description: 'Claude evaluates how well the content format, length, tone, and structure suit each distribution channel. Returned as part of the same tool call as Content Quality.',
+                _schema: '[{ channel: string, score: number (0-100) }]',
+                _channels: {
+                  Blog: 'Favors 800-2000 word long-form with headers, images, and depth',
+                  Email: 'Favors concise, scannable content with a clear CTA',
+                  Social: 'Favors punchy, shareable snippets with hooks',
+                  'Web Page': 'Favors structured, scannable content with navigation and CTAs',
+                  Newsletter: 'Favors curated, multi-topic formats with brief summaries',
+                },
+                result: [...aiResult.channelFit].sort((a, b) => b.score - a.score),
+              } as unknown as Record<string, unknown>}
+              formula="Same tool call as Content Quality → submit_content_analysis.input.channelFit"
             />
           ) : (
             <div className="space-y-2.5">
@@ -1176,9 +1206,16 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         >
           {showRawData ? (
             <RawDataBlock
-              title="Gap Analysis"
-              data={{ contentComparison: fullAnalysis.ai.contentComparison } as unknown as Record<string, unknown>}
-              formula="Claude claude-sonnet-4-6 tool_use → submit_strategic_analysis.contentComparison"
+              title="submit_strategic_analysis.contentComparison"
+              data={{
+                _tool: 'submit_strategic_analysis',
+                _field: 'contentComparison',
+                _model: 'claude-sonnet-4-6',
+                _description: 'Claude compares editor content against real Lytics audience intelligence data (topics, segments, behavioral scores, aggregate affinities). Only available when Lytics data is present — Claude receives the full Lytics context in its system prompt.',
+                _context_provided: 'Lytics topics with confidence, aligned audiences with sizes, topic behavioral data (recency/intensity/propensity/opportunity), aggregate audience affinities',
+                result: fullAnalysis.ai.contentComparison,
+              } as unknown as Record<string, unknown>}
+              formula="anthropic.messages.create({ system: lyticsContext, tools: [submit_strategic_analysis] }) → .input.contentComparison"
             />
           ) : (
             <p className="text-xs text-venus-gray-600 leading-relaxed">
@@ -1202,9 +1239,21 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         >
           {showRawData ? (
             <RawDataBlock
-              title="Recommendations"
-              data={fullAnalysis.ai.recommendations as unknown as Record<string, unknown>}
-              formula="Claude claude-sonnet-4-6 tool_use → submit_strategic_analysis.recommendations"
+              title="submit_strategic_analysis.recommendations"
+              data={{
+                _tool: 'submit_strategic_analysis',
+                _field: 'recommendations',
+                _model: 'claude-sonnet-4-6',
+                _description: 'Claude generates strategic recommendations grounded in Lytics behavioral data. Each sub-section is a required field in the tool schema — Claude must provide all four.',
+                _schema: {
+                  contentUpdates: 'string[] — 3-5 specific content improvements to better align with high-opportunity audiences',
+                  campaignIdeas: 'string[] — 2-3 campaign concepts leveraging behavioral engagement data',
+                  underservedAudiences: '[{name, size, gap, suggestion}] — audiences the content could be adapted for',
+                  contentGaps: '[{topic, userCount, docCount, opportunity}] — topics where user interest outpaces available content',
+                },
+                result: fullAnalysis.ai.recommendations,
+              } as unknown as Record<string, unknown>}
+              formula="Same tool call as Gap Analysis → submit_strategic_analysis.input.recommendations"
             />
           ) : (
             <>
