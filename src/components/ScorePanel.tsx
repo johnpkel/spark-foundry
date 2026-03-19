@@ -421,7 +421,7 @@ function timeAgo(ts: number): string {
 
 function lyticsUrl(aid: string, path: string): string | undefined {
   if (!aid) return undefined;
-  return `https://app.lytics.io/a/${aid}/${path}`;
+  return `https://app.lytics.com/a/${aid}/${path}`;
 }
 
 function CollapsibleSummary({ summary }: { summary: string }) {
