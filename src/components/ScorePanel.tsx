@@ -232,10 +232,12 @@ function QualityCard({
   icon: Icon,
   label,
   score,
+  tooltip,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
   score: number;
+  tooltip?: string;
 }) {
   const color =
     score >= 80 ? 'text-venus-green' :
@@ -250,7 +252,7 @@ function QualityCard({
     'bg-venus-red';
 
   return (
-    <div className="rounded-lg border border-venus-gray-200 p-2.5">
+    <div className="rounded-lg border border-venus-gray-200 p-2.5" title={tooltip}>
       <div className="flex items-center gap-1.5 mb-1.5">
         <Icon size={12} className="text-venus-gray-400" />
         <span className="text-[10px] text-venus-gray-500 uppercase tracking-wider">{label}</span>
@@ -278,11 +280,11 @@ function QuickStats({
   return (
     <div className="grid grid-cols-3 gap-2">
       {[
-        { label: 'Words', value: wordCount.toLocaleString() },
-        { label: 'Sentences', value: sentenceCount.toLocaleString() },
-        { label: 'Readability', value: `${readability}` },
+        { label: 'Words', value: wordCount.toLocaleString(), tip: 'Total word count in the editor' },
+        { label: 'Sentences', value: sentenceCount.toLocaleString(), tip: 'Number of sentences detected' },
+        { label: 'Readability', value: `${readability}`, tip: 'Readability score (0\u2013100) based on average words per sentence. Shorter sentences score higher. ~12 words/sentence = 100. Helps gauge if content is accessible to your target audience.' },
       ].map((stat) => (
-        <div key={stat.label} className="text-center rounded-lg bg-surface-secondary p-2">
+        <div key={stat.label} className="text-center rounded-lg bg-surface-secondary p-2" title={stat.tip}>
           <div className="text-base font-bold text-venus-gray-700">{stat.value}</div>
           <div className="text-[10px] text-venus-gray-400 uppercase tracking-wider">
             {stat.label}
@@ -685,8 +687,13 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       )}
 
       {/* Ring Chart */}
-      <div className="flex justify-center mb-5">
-        <RingChart score={displayScore} />
+      <div className="flex justify-center mb-5 relative">
+        <div title={aiResult
+          ? 'Content Score: AI-assessed overall quality combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze.'
+          : 'Content Score: estimated from word count, sentence structure, and content substance. Click Analyze for a full AI assessment.'
+        }>
+          <RingChart score={displayScore} />
+        </div>
       </div>
 
       {/* Quick Stats */}
@@ -835,10 +842,10 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       {aiResult ? (
         <Section icon={Target} title="Content Quality">
           <div className="grid grid-cols-2 gap-2">
-            <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} />
-            <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} />
-            <QualityCard icon={Sparkles} label="Engagement" score={aiResult.contentQuality.engagement} />
-            <QualityCard icon={Search} label="SEO" score={aiResult.contentQuality.seoReadiness} />
+            <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." />
+            <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." />
+            <QualityCard icon={Sparkles} label="Engagement" score={aiResult.contentQuality.engagement} tooltip="How likely the content is to hold a reader's attention. Considers hooks, storytelling, actionable takeaways, and formatting variety." />
+            <QualityCard icon={Search} label="SEO" score={aiResult.contentQuality.seoReadiness} tooltip="How well-optimized the content is for search engines. Considers keyword presence, heading structure, meta-friendliness, and content depth." />
           </div>
         </Section>
       ) : (
