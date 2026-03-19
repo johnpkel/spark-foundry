@@ -839,13 +839,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
         <CollapsibleSummary summary={aiResult.summary} />
       )}
 
-      {/* Ring Chart — only shown after AI analysis */}
-      {aiResult?.overallScore != null && (
-        <div className="flex items-center justify-center gap-2 mb-5">
-          <RingChart score={aiResult.overallScore} />
-          <Tooltip text="AI-assessed content quality score (0-100) combining readability, clarity, engagement, and SEO readiness. Updated when you click Analyze." />
-        </div>
-      )}
+
 
       {/* Quick Stats moved to editor toolbar — see SparkEditor.tsx EditorStatsBar */}
 
@@ -1160,6 +1154,14 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             ))}
           </div>
         </Section>
+      )}
+
+      {/* Content Score ring — bottom of panel, only after AI analysis */}
+      {aiResult?.overallScore != null && (
+        <div className="flex items-center justify-center gap-2 pt-2 mt-2 border-t border-venus-gray-100">
+          <RingChart score={aiResult.overallScore} />
+          <Tooltip text="AI-assessed content quality score (0-100) combining readability, clarity, engagement, and SEO readiness. Updated when you run full analysis." />
+        </div>
       )}
     </div>
   );
