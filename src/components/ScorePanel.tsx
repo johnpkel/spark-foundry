@@ -35,7 +35,7 @@ interface AIAnalysisResult {
   overallScore: number;
   summary: string;
   topics: { name: string; score: number }[];
-  audiences: { name: string; alignment: number; size: number }[];
+  audiences?: { name: string; alignment: number; size: number }[];
   contentQuality: {
     readability: number;
     clarity: number;
@@ -43,7 +43,7 @@ interface AIAnalysisResult {
     seoReadiness: number;
   };
   channelFit: { channel: string; score: number }[];
-  recommendations: string[];
+  recommendations?: string[];
 }
 
 interface FullAnalysisResult {
@@ -773,7 +773,7 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
       )}
 
       {/* AI: Audience Alignment */}
-      {aiResult ? (
+      {aiResult?.audiences?.length ? (
         <Section icon={Users} title="Audience Alignment">
           <div className="space-y-2.5">
             {aiResult.audiences.slice(0, 6).map((a) => {
@@ -820,7 +820,7 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
       )}
 
       {/* AI: Recommendations */}
-      {aiResult ? (
+      {aiResult?.recommendations?.length ? (
         <Section icon={Lightbulb} title="Recommendations">
           <div className="space-y-2">
             {aiResult.recommendations.map((rec, i) => (
