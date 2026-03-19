@@ -1029,7 +1029,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* AI: Content Quality */}
       {aiResult ? (
-        <Section icon={Target} title="Content Quality">
+        <Section icon={Target} title="Content Quality" tooltip="AI-assessed quality metrics. Each score (0-100) evaluates a different dimension of your content's effectiveness. Run full analysis to generate these scores.">
           <div className="grid grid-cols-2 gap-2">
             <QualityCard icon={BookOpen} label="Readability" score={aiResult.contentQuality.readability} tooltip="How easy the content is to read. Considers sentence length, vocabulary complexity, and structure. Higher = more accessible to broader audiences." />
             <QualityCard icon={Eye} label="Clarity" score={aiResult.contentQuality.clarity} tooltip="How clearly the content communicates its message. Considers logical flow, specificity, and absence of ambiguity." />
@@ -1077,31 +1077,15 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* AI: Channel Fit */}
       {aiResult ? (
-        <Section icon={BarChart3} title="Channel Fit">
+        <Section icon={Radio} title="Channel Fit" tooltip="How well your content's format and style suits each distribution channel. Higher scores indicate a better natural fit. Use this to decide where to publish or how to adapt the content.">
           <div className="space-y-2.5">
-            {aiResult.channelFit.map((ch) => (
+            {[...aiResult.channelFit].sort((a, b) => b.score - a.score).map((ch) => (
               <EnhancedBar key={ch.channel} label={ch.channel} value={ch.score} />
             ))}
           </div>
         </Section>
       ) : (
         <LockedSection icon={BarChart3} title="Channel Fit" />
-      )}
-
-      {/* AI: Recommendations */}
-      {aiResult?.recommendations?.length ? (
-        <Section icon={Lightbulb} title="Recommendations">
-          <div className="space-y-2">
-            {aiResult.recommendations.map((rec, i) => (
-              <div key={i} className="flex gap-2 text-xs text-venus-gray-600">
-                <span className="text-venus-purple font-bold shrink-0">{i + 1}.</span>
-                <span className="leading-relaxed">{rec}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
-      ) : (
-        <LockedSection icon={Lightbulb} title="Recommendations" />
       )}
 
       {/* ── Layer 2: Full Analysis (Lytics + AI) ── */}
@@ -1121,6 +1105,11 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
 
       {/* Strategic Recommendations */}
       {fullAnalysis?.ai?.recommendations && (
+        fullAnalysis.ai.recommendations.contentUpdates?.length > 0 ||
+        fullAnalysis.ai.recommendations.campaignIdeas?.length > 0 ||
+        fullAnalysis.ai.recommendations.underservedAudiences?.length > 0 ||
+        fullAnalysis.ai.recommendations.contentGaps?.length > 0
+      ) && (
         <Section
           icon={Lightbulb}
           title="Strategic Recommendations"
