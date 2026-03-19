@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useActivityLog } from './ActivityLogProvider';
 import type { LogEntry, LogService } from '@/lib/activity-logger';
 
@@ -177,6 +177,42 @@ function ActivityLogPanel({ onClose }: { onClose: () => void }) {
   const [newestFirst, setNewestFirst] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // ─── Resizable width ─────────────────────────────────
+  const [width, setWidth] = useState(480);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(480);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [width]);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = startX.current - e.clientX;
+      const newWidth = Math.max(320, Math.min(startWidth.current + delta, window.innerWidth * 0.8));
+      setWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
   useEffect(() => { markAllRead(); }, [markAllRead]);
 
   const filtered = useMemo(() => {
@@ -199,7 +235,17 @@ function ActivityLogPanel({ onClose }: { onClose: () => void }) {
       <div className="fixed inset-0 bg-black/30 dark:bg-black/50 z-40" onClick={onClose} />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 h-full w-[480px] bg-surface border-l border-venus-gray-200 z-50 flex flex-col shadow-2xl">
+      <div
+        className="fixed right-0 top-0 h-full bg-surface border-l border-venus-gray-200 z-50 flex flex-col shadow-2xl"
+        style={{ width }}
+      >
+        {/* Resize handle */}
+        <div
+          onMouseDown={onMouseDown}
+          className="absolute left-0 top-0 h-full w-1.5 cursor-col-resize z-10 group hover:bg-venus-purple/20 active:bg-venus-purple/30 transition-colors"
+        >
+          <div className="absolute left-0 top-0 h-full w-px bg-venus-gray-200 group-hover:bg-venus-purple/50 transition-colors" />
+        </div>
 
         {/* Header */}
         <div className="h-12 flex items-center px-4 border-b border-venus-gray-200 shrink-0 gap-3">

@@ -15,6 +15,18 @@ import type { FormattedTopic, FormattedAudience, AggregateAffinity, LyticsConten
 const anthropic = new Anthropic();
 const MAX_TEXT_LENGTH = 4000;
 
+// Only look up content entities for URLs on the Spark's primary domains.
+// Other URLs (Google Docs, Slack, etc.) would always 404 in the Lytics index.
+function isIndexedUrl(url: string, primaryDomains: string[]): boolean {
+  if (primaryDomains.length === 0) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return primaryDomains.some((d) => hostname === d || hostname.endsWith(`.${d}`) || hostname === `www.${d}`);
+  } catch {
+    return false;
+  }
+}
+
 // ─── Claude Tool: Content Quality Analysis ──────
 
 const QUALITY_TOOL: Anthropic.Tool = {
@@ -139,11 +151,13 @@ function buildLyticsContext(
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { text, referencedItemTexts, sparkItemUrls } = body as {
+    const { text, referencedItemTexts, sparkItemUrls, primaryDomains: rawDomains } = body as {
       text?: string;
       referencedItemTexts?: string[];
       sparkItemUrls?: string[];
+      primaryDomains?: string[];
     };
+    const primaryDomains = (rawDomains ?? []).map((d) => d.toLowerCase());
 
     if (!text && (!referencedItemTexts || referencedItemTexts.length === 0)) {
       return NextResponse.json({ error: 'text or referencedItemTexts is required' }, { status: 400 });
@@ -171,7 +185,9 @@ export async function POST(req: Request) {
       lyticsAudiences = enrichResult.audiences;
 
       // Phase 2: sample aggregate affinities + fetch content entities in parallel
-      const contentEntityPromises = (sparkItemUrls ?? []).slice(0, 5).map((url) => getContentByUrl(url));
+      // Only look up URLs from the Spark's primary domains (skip Google Docs, Slack, etc.)
+      const indexedUrls = (sparkItemUrls ?? []).filter((url) => isIndexedUrl(url, primaryDomains)).slice(0, 5);
+      const contentEntityPromises = indexedUrls.map((url) => getContentByUrl(url));
 
       const [affinities, ...contentEntities] = await Promise.all([
         sampleAggregateAffinities(5),

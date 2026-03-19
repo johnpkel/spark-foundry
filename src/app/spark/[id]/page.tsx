@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
+import PrimaryDomains from '@/components/PrimaryDomains';
 import { ThemeToggle } from '@/components/ThemeProvider';
 import { ActivityLogButton } from '@/components/ActivityLogPanel';
 import ItemCard from '@/components/ItemCard';
@@ -182,6 +183,23 @@ function SparkWorkspacePage() {
         // silently fail for discussion save
       }
     }, 500);
+  }, [sparkId]);
+
+  // ── Primary domains update ─────────────────────────
+  const updatePrimaryDomains = useCallback(async (domains: string[]) => {
+    const currentSpark = sparkRef.current;
+    if (!currentSpark) return;
+    const merged = { ...(currentSpark.metadata ?? {}), primaryDomains: domains };
+    setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
+    try {
+      await fetch(`/api/sparks/${sparkId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metadata: merged }),
+      });
+    } catch {
+      // silently fail
+    }
   }, [sparkId]);
 
   // Resizable three-column layout
@@ -421,6 +439,10 @@ function SparkWorkspacePage() {
             onNameChange={handleCollabNameChange}
           />
           <IntegrationsStatus />
+          <PrimaryDomains
+            domains={(spark.metadata?.primaryDomains as string[]) ?? []}
+            onUpdate={updatePrimaryDomains}
+          />
           <button
             onClick={() => setLeftTab('generate')}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-venus-purple hover:bg-venus-purple-deep text-white text-xs font-semibold rounded-lg transition-colors"
@@ -764,7 +786,7 @@ function SparkWorkspacePage() {
                   onAddReply={handleAddReply}
                 />
               ) : (
-                <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} />
+                <ScorePanel sparkItems={items} canvasGroups={canvasState.groups} primaryDomains={(spark.metadata?.primaryDomains as string[]) ?? []} />
               )}
             </div>
           )}

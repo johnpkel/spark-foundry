@@ -70,6 +70,7 @@ interface FullAnalysisResult {
 interface ScorePanelProps {
   sparkItems: SparkItem[];
   canvasGroups: CanvasGroup[];
+  primaryDomains?: string[];
 }
 
 /* ── Stop words for keyword extraction ──────── */
@@ -345,7 +346,7 @@ function formatProfileCount(count: number): string {
 
 const MOCK_DEBOUNCE_MS = 500;
 
-export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps) {
+export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = [] }: ScorePanelProps) {
   const editorCtx = useEditorContext();
 
   const [mockScores, setMockScores] = useState<MockScores | null>(null);
@@ -442,7 +443,7 @@ export default function ScorePanel({ sparkItems, canvasGroups }: ScorePanelProps
       const res = await fetch('/api/lytics/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: plainText, referencedItemTexts, sparkItemUrls }),
+        body: JSON.stringify({ text: plainText, referencedItemTexts, sparkItemUrls, primaryDomains }),
         signal: controller.signal,
       });
 
