@@ -23,18 +23,26 @@ const MAX_ENRICH_CHARS = 2000;
 
 // ─── Helpers ────────────────────────────────────────
 
-function getToken(): string {
+async function getToken(): Promise<string> {
+  // Try cookie-stored token first (user-configured via UI), fall back to env var
+  try {
+    const { getLyticsToken } = await import('@/app/api/auth/lytics/route');
+    const token = await getLyticsToken();
+    if (token) return token;
+  } catch {
+    // cookies() not available outside request context — fall back to env var
+  }
   const token = process.env.LYTICS_ACCESS_TOKEN;
   if (!token) throw new Error('LYTICS_ACCESS_TOKEN is not configured');
   return token;
 }
 
-function headers(): HeadersInit {
-  return { Authorization: getToken(), 'Content-Type': 'application/json' };
+async function authHeaders(): Promise<HeadersInit> {
+  return { Authorization: await getToken(), 'Content-Type': 'application/json' };
 }
 
-function headersGet(): HeadersInit {
-  return { Authorization: getToken() };
+async function authHeadersGet(): Promise<HeadersInit> {
+  return { Authorization: await getToken() };
 }
 
 // ─── Content: Enrich (classify text → topics) ───────
@@ -42,6 +50,7 @@ function headersGet(): HeadersInit {
 export async function enrichContent(text: string): Promise<EnrichResult> {
   const truncated = text.slice(0, MAX_ENRICH_CHARS);
   const url = `${LYTICS_BASE}/v2/content/enrich`;
+  const token = await getToken();
 
   // NOTE: This endpoint requires form-encoded body, NOT JSON.
   // Sending JSON causes Lytics to classify the JSON structure itself.
@@ -52,7 +61,7 @@ export async function enrichContent(text: string): Promise<EnrichResult> {
       url,
       () => fetch(url, {
         method: 'POST',
-        headers: { Authorization: getToken(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { Authorization: token, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `text=${encodeURIComponent(truncated)}`,
       }),
       { method: 'POST' },
@@ -76,12 +85,13 @@ export async function alignContent(
 ): Promise<AudienceAlignment[]> {
   const url = `${LYTICS_BASE}/v2/content/align`;
   const body = { topics };
+  const hdrs = await authHeaders();
 
   const { data } = await traceFetch<{ data: AudienceAlignment[] }>(
     'lytics',
     `align content (${Object.keys(topics).length} topics)`,
     url,
-    () => fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) }),
+    () => fetch(url, { method: 'POST', headers: hdrs, body: JSON.stringify(body) }),
     { method: 'POST', requestBody: body },
   );
 
@@ -93,12 +103,13 @@ export async function alignContent(
 
 export async function getOpportunity(): Promise<OpportunityTopic[]> {
   const url = `${LYTICS_BASE}/v2/content/opportunity`;
+  const hdrs = await authHeadersGet();
 
   const { data } = await traceFetch<{ data: { topics: OpportunityTopic[] } }>(
     'lytics',
     'content opportunity',
     url,
-    () => fetch(url, { headers: headersGet() }),
+    () => fetch(url, { headers: hdrs }),
     { method: 'GET' },
   );
 
@@ -111,13 +122,14 @@ export async function getOpportunity(): Promise<OpportunityTopic[]> {
 export async function getContentByUrl(contentUrl: string): Promise<LyticsContentEntity | null> {
   const params = new URLSearchParams({ url: contentUrl });
   const url = `${LYTICS_BASE}/v2/content/entity?${params}`;
+  const hdrs = await authHeadersGet();
 
   try {
     const { data } = await traceFetch<{ data: LyticsContentEntity }>(
       'lytics',
       `content entity: ${contentUrl.slice(0, 60)}`,
       url,
-      () => fetch(url, { headers: headersGet() }),
+      () => fetch(url, { headers: hdrs }),
       { method: 'GET' },
     );
 
@@ -134,12 +146,13 @@ export async function getSegments(sizes = true): Promise<LyticsSegment[]> {
   const params = new URLSearchParams();
   if (sizes) params.set('sizes', 'true');
   const url = `${LYTICS_BASE}/v2/segment?${params}`;
+  const hdrs = await authHeadersGet();
 
   const { data } = await traceFetch<{ data: LyticsSegment[] }>(
     'lytics',
     'list segments',
     url,
-    () => fetch(url, { headers: headersGet() }),
+    () => fetch(url, { headers: hdrs }),
     { method: 'GET' },
   );
 
@@ -151,12 +164,13 @@ export async function getSegments(sizes = true): Promise<LyticsSegment[]> {
 
 export async function getSegmentGroups(): Promise<SegmentGroup[]> {
   const url = `${LYTICS_BASE}/v2/segment/group`;
+  const hdrs = await authHeadersGet();
 
   const { data } = await traceFetch<{ data: SegmentGroup[] }>(
     'lytics',
     'list segment groups',
     url,
-    () => fetch(url, { headers: headersGet() }),
+    () => fetch(url, { headers: hdrs }),
     { method: 'GET' },
   );
 
@@ -172,6 +186,7 @@ export async function scanSegment(
 ): Promise<Record<string, unknown>[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   const url = `${LYTICS_BASE}/api/segment/${segmentId}/scan?${params}`;
+  const hdrs = await authHeadersGet();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
@@ -181,7 +196,7 @@ export async function scanSegment(
       'lytics',
       `scan segment ${segmentId.slice(0, 8)}… (limit ${limit})`,
       url,
-      () => fetch(url, { headers: headersGet(), signal: controller.signal }),
+      () => fetch(url, { headers: hdrs, signal: controller.signal }),
       { method: 'GET' },
     );
 
@@ -196,6 +211,13 @@ export async function scanSegment(
 
 // ─── Utility: check if Lytics is configured ────────
 
-export function isLyticsConfigured(): boolean {
+export async function isLyticsConfigured(): Promise<boolean> {
+  try {
+    const { getLyticsToken } = await import('@/app/api/auth/lytics/route');
+    const token = await getLyticsToken();
+    if (token) return true;
+  } catch {
+    // Fall back to env var check
+  }
   return !!process.env.LYTICS_ACCESS_TOKEN;
 }

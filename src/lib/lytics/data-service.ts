@@ -43,8 +43,8 @@ export function getData(): LyticsCache {
 }
 
 /** Check if Lytics is available. */
-export function isAvailable(): boolean {
-  return isLyticsConfigured();
+export async function isAvailable(): Promise<boolean> {
+  return await isLyticsConfigured();
 }
 
 /**
@@ -53,7 +53,7 @@ export function isAvailable(): boolean {
  * Safe to call concurrently — deduplicates in-flight requests.
  */
 export async function refreshGlobalData(): Promise<void> {
-  if (!isLyticsConfigured() || isRefreshing) return;
+  if (!await isLyticsConfigured() || isRefreshing) return;
   isRefreshing = true;
 
   try {
@@ -83,7 +83,7 @@ export async function refreshGlobalData(): Promise<void> {
 export async function enrichEditorContent(
   text: string,
 ): Promise<{ topics: FormattedTopic[]; inferredTopics: FormattedTopic[]; audiences: FormattedAudience[] }> {
-  if (!isLyticsConfigured()) {
+  if (!await isLyticsConfigured()) {
     return { topics: [], inferredTopics: [], audiences: [] };
   }
 
@@ -127,7 +127,7 @@ export async function enrichEditorContent(
 export async function sampleAggregateAffinities(
   topN = 5,
 ): Promise<AggregateAffinity[]> {
-  if (!isLyticsConfigured()) return [];
+  if (!await isLyticsConfigured()) return [];
 
   // Use the top aligned audiences from the current cache
   const topAudiences = cache.contentAudiences.slice(0, topN);

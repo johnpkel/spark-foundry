@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plug, Loader2 } from 'lucide-react';
+import { Plug, Loader2, Key } from 'lucide-react';
 import { INTEGRATIONS } from '@/lib/integrations';
 import type { IntegrationStatusMap, IntegrationStatus } from '@/lib/integrations';
 
@@ -24,6 +24,9 @@ export default function IntegrationsStatus() {
   const [statuses, setStatuses] = useState<IntegrationStatusMap | null>(null);
   const [open, setOpen] = useState(false);
   const [actionKey, setActionKey] = useState<string | null>(null);
+  const [tokenInputKey, setTokenInputKey] = useState<string | null>(null);
+  const [tokenValue, setTokenValue] = useState('');
+  const [tokenError, setTokenError] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
   const fetchStatuses = useCallback(() => {
@@ -100,8 +103,39 @@ export default function IntegrationsStatus() {
   async function handleDisconnect(key: string, disconnectEndpoint: string) {
     setActionKey(key);
     try {
-      await fetch(disconnectEndpoint, { method: 'POST' });
+      // Token-based integrations use DELETE, OAuth uses POST
+      const integration = INTEGRATIONS.find((i) => i.key === key);
+      const method = integration?.tokenAuth ? 'DELETE' : 'POST';
+      await fetch(disconnectEndpoint, { method });
       fetchStatuses();
+    } finally {
+      setActionKey(null);
+      setTokenInputKey(null);
+      setTokenValue('');
+      setTokenError('');
+    }
+  }
+
+  async function handleTokenConnect(key: string, tokenEndpoint: string) {
+    if (!tokenValue.trim()) return;
+    setActionKey(key);
+    setTokenError('');
+    try {
+      const res = await fetch(tokenEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tokenValue.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTokenError(data.error || 'Invalid token');
+        return;
+      }
+      setTokenInputKey(null);
+      setTokenValue('');
+      fetchStatuses();
+    } catch {
+      setTokenError('Connection failed');
     } finally {
       setActionKey(null);
     }
@@ -145,59 +179,112 @@ export default function IntegrationsStatus() {
             const isLoading = actionKey === integration.key;
             const isConnected = status === 'active' || status === 'connected';
             const canConnect = !isConnected && !!integration.connectUrl;
+            const canTokenConnect = !isConnected && !!integration.tokenAuth;
             const canDisconnect = isConnected && !!integration.disconnectEndpoint;
+            const showTokenInput = tokenInputKey === integration.key;
 
             return (
-              <div key={integration.key} className="flex items-center gap-3 px-4 py-2.5">
-                <Icon size={16} className="text-venus-gray-500 shrink-0" />
+              <div key={integration.key} className="px-4 py-2.5">
+                <div className="flex items-center gap-3">
+                  <Icon size={16} className="text-venus-gray-500 shrink-0" />
 
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-venus-gray-700 font-medium truncate">
-                    {integration.label}
-                  </p>
-                  {detail && (
-                    <p className="text-xs text-venus-gray-500 truncate">{detail}</p>
-                  )}
-                </div>
-
-                <div className="flex flex-col items-end gap-0.5 shrink-0">
-                  {/* Status indicator */}
-                  <div className="flex items-center gap-1.5">
-                    {isLoading
-                      ? <Loader2 size={12} className="animate-spin text-venus-gray-400" />
-                      : <span className={`w-2 h-2 rounded-full ${statusDotClass(status)}`} />
-                    }
-                    <span className={`text-xs ${
-                      isConnected
-                        ? 'text-venus-green'
-                        : 'text-venus-gray-400'
-                    }`}>
-                      {statusLabel(status)}
-                    </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-venus-gray-700 font-medium truncate">
+                      {integration.label}
+                    </p>
+                    {detail && (
+                      <p className="text-xs text-venus-gray-500 truncate">{detail}</p>
+                    )}
                   </div>
 
-                  {/* Connect / Disconnect action */}
-                  {canConnect && !isLoading && (
-                    <button
-                      onClick={() => openConnectPopup(
-                        integration.key,
-                        integration.connectUrl!,
-                        integration.popupEventType!
-                      )}
-                      className="text-[10px] text-venus-purple hover:text-venus-purple-deep font-medium transition-colors"
-                    >
-                      Connect →
-                    </button>
-                  )}
-                  {canDisconnect && !isLoading && (
-                    <button
-                      onClick={() => handleDisconnect(integration.key, integration.disconnectEndpoint!)}
-                      className="text-[10px] text-venus-gray-400 hover:text-venus-red transition-colors"
-                    >
-                      Disconnect
-                    </button>
-                  )}
+                  <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    {/* Status indicator */}
+                    <div className="flex items-center gap-1.5">
+                      {isLoading
+                        ? <Loader2 size={12} className="animate-spin text-venus-gray-400" />
+                        : <span className={`w-2 h-2 rounded-full ${statusDotClass(status)}`} />
+                      }
+                      <span className={`text-xs ${
+                        isConnected
+                          ? 'text-venus-green'
+                          : 'text-venus-gray-400'
+                      }`}>
+                        {statusLabel(status)}
+                      </span>
+                    </div>
+
+                    {/* OAuth Connect */}
+                    {canConnect && !isLoading && (
+                      <button
+                        onClick={() => openConnectPopup(
+                          integration.key,
+                          integration.connectUrl!,
+                          integration.popupEventType!
+                        )}
+                        className="text-[10px] text-venus-purple hover:text-venus-purple-deep font-medium transition-colors"
+                      >
+                        Connect →
+                      </button>
+                    )}
+
+                    {/* Token Connect */}
+                    {canTokenConnect && !isLoading && !showTokenInput && (
+                      <button
+                        onClick={() => { setTokenInputKey(integration.key); setTokenValue(''); setTokenError(''); }}
+                        className="text-[10px] text-venus-purple hover:text-venus-purple-deep font-medium transition-colors flex items-center gap-0.5"
+                      >
+                        <Key size={9} />
+                        Add token →
+                      </button>
+                    )}
+
+                    {/* Disconnect */}
+                    {canDisconnect && !isLoading && (
+                      <button
+                        onClick={() => handleDisconnect(integration.key, integration.disconnectEndpoint!)}
+                        className="text-[10px] text-venus-gray-400 hover:text-venus-red transition-colors"
+                      >
+                        Disconnect
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Token input (expanded inline) */}
+                {showTokenInput && (
+                  <div className="mt-2 ml-7">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="password"
+                        value={tokenValue}
+                        onChange={(e) => setTokenValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleTokenConnect(integration.key, integration.tokenEndpoint!);
+                          if (e.key === 'Escape') { setTokenInputKey(null); setTokenValue(''); setTokenError(''); }
+                        }}
+                        placeholder={integration.tokenPlaceholder || 'Paste access token'}
+                        className="flex-1 text-xs bg-venus-gray-50 border border-venus-gray-200 focus:border-venus-purple rounded px-2 py-1.5 outline-none text-venus-gray-700 placeholder:text-venus-gray-400 font-mono"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => handleTokenConnect(integration.key, integration.tokenEndpoint!)}
+                        disabled={!tokenValue.trim() || isLoading}
+                        className="text-[10px] font-medium px-2.5 py-1.5 bg-venus-purple hover:bg-venus-purple-deep disabled:opacity-40 text-white rounded transition-colors"
+                      >
+                        {isLoading ? 'Validating…' : 'Connect'}
+                      </button>
+                      <button
+                        onClick={() => { setTokenInputKey(null); setTokenValue(''); setTokenError(''); }}
+                        className="text-[10px] text-venus-gray-400 hover:text-venus-gray-600 px-1 transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {tokenError && (
+                      <p className="text-[10px] text-red-500 mt-1">{tokenError}</p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

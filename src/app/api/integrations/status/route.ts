@@ -54,22 +54,28 @@ async function checkSlack(): Promise<IntegrationStatusResult> {
 }
 
 async function checkLytics(): Promise<IntegrationStatusResult> {
-  const token = process.env.LYTICS_ACCESS_TOKEN;
+  // Check cookie-stored token first, then env var
+  let token: string | null = null;
+  try {
+    const { getLyticsToken } = await import('@/app/api/auth/lytics/route');
+    token = await getLyticsToken();
+  } catch {
+    token = process.env.LYTICS_ACCESS_TOKEN || null;
+  }
+
   if (!token) return { status: 'not_configured' };
 
   try {
-    // Validate token by fetching account segments (lightweight call)
     const res = await fetch('https://api.lytics.io/v2/segment?limit=1', {
       headers: { Authorization: token },
     });
     if (!res.ok) return { status: 'not_configured', detail: `API returned ${res.status}` };
 
     const data = await res.json();
-    const segCount = data.data?.length ?? 0;
     const aid = (data.data?.[0] as Record<string, unknown>)?.aid;
     return {
       status: 'active',
-      detail: aid ? `Account ${aid}` : `${segCount} segments`,
+      detail: aid ? `Account ${aid}` : 'Connected',
     };
   } catch {
     return { status: 'not_configured', detail: 'Connection failed' };

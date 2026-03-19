@@ -179,7 +179,7 @@ export async function POST(req: Request) {
         let lyticsContentRecs: LyticsContentEntity[] = [];
         let matchedOpportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[] = [];
 
-        if (isAvailable()) {
+        if (await isAvailable()) {
           // ── Step 1: Refresh Lytics data + classify content ──
           send('step', { id: 'lytics-refresh', label: 'Refreshing Lytics segments & opportunity data', status: 'active' });
           send('step', { id: 'lytics-enrich', label: 'Classifying content topics via Lytics NLP', status: 'active' });

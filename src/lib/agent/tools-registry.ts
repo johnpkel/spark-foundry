@@ -930,7 +930,7 @@ export async function executeTool(
 
     // ── Lytics tools ────────────────
     case 'lytics_insights': {
-      if (!isAvailable()) {
+      if (!(await isAvailable())) {
         return JSON.stringify({ error: 'Lytics is not configured (LYTICS_ACCESS_TOKEN missing)' });
       }
 

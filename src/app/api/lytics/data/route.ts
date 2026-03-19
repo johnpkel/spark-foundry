@@ -7,7 +7,7 @@ import { getData, refreshGlobalData, isAvailable } from '@/lib/lytics/data-servi
  * Returns cached Lytics state. Triggers initial refresh if cache is empty.
  */
 export async function GET() {
-  if (!isAvailable()) {
+  if (!(await isAvailable())) {
     return NextResponse.json({ available: false }, { status: 200 });
   }
 

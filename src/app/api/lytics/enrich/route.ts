@@ -8,7 +8,7 @@ import { enrichEditorContent, isAvailable } from '@/lib/lytics/data-service';
  * Body: { text: string }
  */
 export async function POST(req: Request) {
-  if (!isAvailable()) {
+  if (!(await isAvailable())) {
     return NextResponse.json({ topics: [], inferredTopics: [], audiences: [] });
   }
 

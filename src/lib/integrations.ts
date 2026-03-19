@@ -22,6 +22,12 @@ export interface IntegrationConfig {
   popupEventType?: string;
   /** API endpoint (POST) to disconnect this integration */
   disconnectEndpoint?: string;
+  /** If true, this integration uses a token input instead of OAuth popup */
+  tokenAuth?: boolean;
+  /** API endpoint (POST) to validate and store the token */
+  tokenEndpoint?: string;
+  /** Placeholder text for the token input */
+  tokenPlaceholder?: string;
 }
 
 export const INTEGRATIONS: IntegrationConfig[] = [
@@ -44,7 +50,16 @@ export const INTEGRATIONS: IntegrationConfig[] = [
     disconnectEndpoint: '/api/auth/google/disconnect',
   },
   { key: 'slack', label: 'Slack', icon: MessageSquare, checkType: 'server' },
-  { key: 'lytics', label: 'Lytics', icon: BarChart3, checkType: 'server' },
+  {
+    key: 'lytics',
+    label: 'Lytics',
+    icon: BarChart3,
+    checkType: 'server',
+    tokenAuth: true,
+    tokenEndpoint: '/api/auth/lytics',
+    tokenPlaceholder: 'at.xxxxxxxx.xxxxxxxx',
+    disconnectEndpoint: '/api/auth/lytics',
+  },
   { key: 'web_search', label: 'Web Search', icon: Globe, checkType: 'static' },
 ];
 
