@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Building2, HardDrive, MessageSquare, Globe } from 'lucide-react';
+import { Building2, HardDrive, MessageSquare, Globe, BarChart3 } from 'lucide-react';
 
 // ============================================
 // Integration Registry
@@ -44,6 +44,7 @@ export const INTEGRATIONS: IntegrationConfig[] = [
     disconnectEndpoint: '/api/auth/google/disconnect',
   },
   { key: 'slack', label: 'Slack', icon: MessageSquare, checkType: 'server' },
+  { key: 'lytics', label: 'Lytics', icon: BarChart3, checkType: 'server' },
   { key: 'web_search', label: 'Web Search', icon: Globe, checkType: 'static' },
 ];
 
