@@ -427,17 +427,18 @@ function LockedSection({
   );
 }
 
-function ExplainableItem({ children, explanation }: { children: React.ReactNode; explanation: string }) {
-  const [open, setOpen] = useState(false);
+function ExplainableItem({ children, explanation, forceOpen }: { children: React.ReactNode; explanation: string; forceOpen?: boolean }) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = forceOpen ?? localOpen;
   return (
     <div>
       <div
         className="cursor-pointer group"
-        onClick={() => setOpen(!open)}
+        onClick={() => setLocalOpen(!localOpen)}
       >
         <div className="flex items-center gap-1">
           <div className="flex-1 min-w-0">{children}</div>
-          <ChevronDown size={10} className={`shrink-0 text-venus-gray-300 group-hover:text-venus-gray-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown size={10} className={`shrink-0 text-venus-gray-500 group-hover:text-venus-gray-700 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
         </div>
       </div>
       {open && (
@@ -852,6 +853,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
   }, [editorCtx, lyticsAvailable]);
 
   const [showRawData, setShowRawData] = useState(false);
+  const [expandAll, setExpandAll] = useState(false);
 
   const hasContent = !!mockScores;
 
@@ -883,6 +885,19 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       <div className="flex items-center gap-2 mb-4">
         <h3 className="text-sm font-semibold text-venus-gray-700">Content Scoring</h3>
         {lastFetchedAt > 0 && <span className="text-[10px] text-venus-gray-400">{timeAgo(lastFetchedAt)}</span>}
+        <div className="ml-auto flex items-center gap-1.5">
+          {!showRawData && (
+            <button
+              onClick={() => setExpandAll(!expandAll)}
+              className={`text-[9px] font-medium px-1.5 py-0.5 rounded border transition-colors ${
+                expandAll
+                  ? 'bg-venus-purple/10 text-venus-purple border-venus-purple/30'
+                  : 'text-venus-gray-400 border-venus-gray-200 hover:border-venus-gray-400'
+              }`}
+            >
+              {expandAll ? 'Collapse All' : 'Expand All'}
+            </button>
+          )}
         <button
           onClick={() => setShowRawData(!showRawData)}
           className={`ml-auto text-[9px] font-medium px-1.5 py-0.5 rounded border transition-colors flex items-center gap-1 ${
@@ -894,6 +909,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
           <Code size={9} />
           {showRawData ? 'Visualizations' : 'Raw Data'}
         </button>
+        </div>
       </div>
 
       {errorMsg && (
@@ -928,9 +944,9 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             formula="POST /v2/content/enrich → topics{name: confidence 0-1} × 100"
           />
         ) : lyticsTopics.length > 0 ? (
-          <div className="space-y-2.5">
+          <div className="space-y-3.5">
             {lyticsTopics.slice(0, 8).map((t) => (
-              <ExplainableItem key={t.name} explanation={`"${t.name}" was identified by Lytics NLP with ${t.score}% confidence. This topic is extracted by running your editor text through Lytics' content enrichment pipeline (Diffbot + Google NLP + TextRazor + sentiment analysis). Higher confidence means your content strongly signals this subject, which affects which audience segments it aligns with.`}>
+              <ExplainableItem key={t.name} forceOpen={expandAll || undefined} explanation={`"${t.name}" was identified by Lytics NLP with ${t.score}% confidence. This topic is extracted by running your editor text through Lytics' content enrichment pipeline (Diffbot + Google NLP + TextRazor + sentiment analysis). Higher confidence means your content strongly signals this subject, which affects which audience segments it aligns with.`}>
                 <EnhancedBar label={t.name} value={t.score} />
               </ExplainableItem>
             ))}
@@ -939,7 +955,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
                 <p className="text-[10px] text-venus-gray-400 uppercase tracking-wider mb-1.5">Inferred</p>
                 {lyticsInferredTopics.slice(0, 4).map((t) => (
                   <div key={t.name} className="opacity-60">
-                    <ExplainableItem explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
+                    <ExplainableItem forceOpen={expandAll || undefined} explanation={`"${t.name}" is an inferred topic (${t.score}% confidence). Inferred topics are secondary classifications that Lytics' NLP detected with lower certainty. They may represent tangential themes in your content and can still influence audience alignment.`}>
                       <EnhancedBar label={t.name} value={t.score} />
                     </ExplainableItem>
                   </div>
@@ -954,7 +970,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
             )}
           </div>
         ) : aiResult ? (
-          <div className="space-y-2.5">
+          <div className="space-y-3.5">
             {aiResult.topics.slice(0, 8).map((t) => (
               <EnhancedBar key={t.name} label={t.name} value={t.score} />
             ))}
@@ -992,7 +1008,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               formula="POST /v2/content/align(topics) → cosine similarity → alignment × 100"
             />
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3.5">
               {lyticsAudiences.slice(0, 10).map((a) => {
                 const dotSize =
                   a.size >= 1_000_000 ? 'w-2.5 h-2.5' :
@@ -1041,7 +1057,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               formula="score = (userCount / maxUsers) × (1 - docCount / maxDocs) × 100"
             />
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3.5">
               {lyticsOpportunity
                 .filter((o) => lyticsTopics.some((t) => t.name.toLowerCase() === o.topic.toLowerCase()))
                 .slice(0, 5)
@@ -1182,7 +1198,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               formula="Same tool call as Content Quality → submit_content_analysis.input.channelFit"
             />
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3.5">
               {[...aiResult.channelFit].sort((a, b) => b.score - a.score).map((ch) => (
                 <ExplainableItem key={ch.channel} explanation={`"${ch.channel}" fit: ${ch.score}%. AI-assessed by Claude based on content length, format, tone, and structure. ${ch.channel === 'Blog' ? 'Blogs favor 800-2000 word long-form with headers and images.' : ch.channel === 'Email' ? 'Email favors concise, scannable content with a clear CTA.' : ch.channel === 'Social' ? 'Social favors punchy, shareable snippets under 280 chars with hooks.' : ch.channel === 'Web Page' ? 'Web pages favor structured, scannable content with clear navigation and CTAs.' : 'Newsletters favor curated, multi-topic formats with brief summaries and links.'}`}>
                   <EnhancedBar label={ch.channel} value={ch.score} />
@@ -1286,7 +1302,7 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
               {fullAnalysis.ai.recommendations.underservedAudiences?.length > 0 && (
                 <div className="mb-3">
                   <h5 className="text-[10px] font-semibold uppercase tracking-wider text-venus-gray-400 mb-1.5">Underserved Audiences</h5>
-                  <div className="space-y-2">
+                  <div className="space-y-3.5">
                     {fullAnalysis.ai.recommendations.underservedAudiences.map((a: { name: string; size: number; gap: string; suggestion: string }, i: number) => (
                       <div key={i} className="rounded-lg border border-venus-gray-200 p-2">
                         <div className="flex items-center justify-between mb-1">
