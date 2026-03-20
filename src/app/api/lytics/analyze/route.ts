@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { addLogEntry } from '@/lib/activity-logger';
 import {
@@ -148,7 +149,7 @@ function buildLyticsContext(
 
 // ─── SSE Route handler ──────────────────────────────
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const body = await req.json();
   const { text, referencedItemTexts, sparkItemUrls, primaryDomains: rawDomains } = body as {
     text?: string;
