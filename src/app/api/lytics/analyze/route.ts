@@ -11,6 +11,8 @@ import { getContentByUrl } from '@/lib/lytics/api';
 import { getDimension, computeOpportunityScore } from '@/lib/lytics/types';
 import type { FormattedTopic, FormattedAudience, AggregateAffinity, LyticsContentEntity } from '@/lib/lytics/types';
 
+export const dynamic = 'force-dynamic';
+
 const anthropic = new Anthropic();
 const MAX_TEXT_LENGTH = 4000;
 
@@ -172,8 +174,8 @@ export async function POST(req: Request) {
         controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
-      // Send initial event immediately to prevent Nginx proxy timeout
-      send('step', { id: 'init', label: 'Starting analysis', status: 'active' });
+      // Flush headers immediately with SSE comment (reliable across proxies)
+      controller.enqueue(new TextEncoder().encode(': connected\n\n'));
 
       // Keepalive: send a comment every 15s to prevent proxy idle timeout
       const keepalive = setInterval(() => {
@@ -186,8 +188,6 @@ export async function POST(req: Request) {
         let aggregateAffinities: AggregateAffinity[] = [];
         let lyticsContentRecs: LyticsContentEntity[] = [];
         let matchedOpportunity: { topic: string; userCount: number; docCount: number; opportunityScore: number }[] = [];
-
-        send('step', { id: 'init', label: 'Starting analysis', status: 'done' });
 
         if (await isAvailable()) {
           // ── Step 1: Refresh Lytics data + classify content ──
@@ -365,7 +365,7 @@ You MUST call the submit_content_analysis tool with your analysis.`}`;
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     },
