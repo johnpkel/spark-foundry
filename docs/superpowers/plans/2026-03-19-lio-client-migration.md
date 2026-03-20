@@ -8,6 +8,8 @@
 
 **Tech Stack:** Next.js (App Router), TypeScript, `@lytics/lio-client`, Vitest
 
+**Spec:** `docs/superpowers/specs/2026-03-19-lio-client-migration-design.md`
+
 ---
 
 ## File Map
