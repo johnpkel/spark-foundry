@@ -120,7 +120,7 @@ Constraints:
 ```
 
 **Client-side after restore:**
-1. Call `replaceDocument()` from `editor-context.tsx` to update the editor.
+1. Call `editor.commands.setContent(content)` to update the TipTap editor directly with the JSON content. (Note: `replaceDocument()` in `editor-context.tsx` accepts markdown, not JSON — so use `setContent()` directly or add a new `replaceDocumentJSON()` method to the editor context.)
 2. Trigger `POST /api/lytics/enrich` with the restored content.
 3. Trigger `POST /api/lytics/analyze` SSE stream for full AI analysis.
 4. ScorePanel updates as results stream in — same UX as a manual "Analyze" click.
@@ -185,7 +185,7 @@ User clicks version in dropdown
   → POST /api/sparks/[id]/versions/[versionId]/restore
   → Server writes content to spark.metadata.editor_content
   → Client receives content
-  → replaceDocument() updates TipTap editor
+  → editor.commands.setContent(json) updates TipTap editor (note: replaceDocument() accepts markdown — use setContent() directly for JSON)
   → Auto-save picks up new content on next debounce (no special handling)
   → Client triggers POST /api/lytics/enrich (ambient enrichment)
   → Client triggers POST /api/lytics/analyze (full SSE analysis)
@@ -212,4 +212,5 @@ The ScorePanel does not need to know about versions. It reacts to content change
 | `src/app/api/sparks/[id]/versions/route.ts` | New: POST (save), GET (list) |
 | `src/app/api/sparks/[id]/versions/[versionId]/restore/route.ts` | New: POST (restore) |
 | `src/app/spark/[id]/page.tsx` | Add save status indicator, Save Version button, version dropdown, restore handler, scoring trigger |
+| `src/lib/editor-context.tsx` | Add `replaceDocumentJSON()` method for restoring JSON content |
 | `src/lib/types.ts` | Add `SparkVersion` type |
