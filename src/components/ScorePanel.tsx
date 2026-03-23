@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Target,
   Compass,
@@ -88,6 +88,10 @@ interface ScorePanelProps {
   primaryDomains?: string[];
   sparkId?: string;
   initialLyticsCache?: LyticsCacheData;
+}
+
+export interface ScorePanelHandle {
+  triggerAnalysis: () => void;
 }
 
 /* ── Stop words for keyword extraction ──────── */
@@ -546,7 +550,10 @@ function formatProfileCount(count: number): string {
 
 const MOCK_DEBOUNCE_MS = 500;
 
-export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = [], sparkId, initialLyticsCache }: ScorePanelProps) {
+const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScorePanel(
+  { sparkItems, canvasGroups, primaryDomains = [], sparkId, initialLyticsCache },
+  ref
+) {
   const editorCtx = useEditorContext();
 
   const [mockScores, setMockScores] = useState<MockScores | null>(null);
@@ -741,6 +748,12 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       setIsAnalyzing(false);
     }
   }, [editorCtx, extractReferencedItemTexts, persistLyticsCache, lyticsTopics, lyticsInferredTopics, lyticsAudiences, lyticsOpportunity, lyticsAid, primaryDomains]);
+
+  useImperativeHandle(ref, () => ({
+    triggerAnalysis: () => {
+      analyze();
+    },
+  }), [analyze]);
 
   // Listen for editor updates — debounced mock scoring
   useEffect(() => {
@@ -1369,4 +1382,6 @@ export default function ScorePanel({ sparkItems, canvasGroups, primaryDomains = 
       )}
     </div>
   );
-}
+});
+
+export default ScorePanel;
