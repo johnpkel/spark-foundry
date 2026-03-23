@@ -55,6 +55,16 @@ export interface Spark {
   updated_at: string;
 }
 
+export interface SparkVersion {
+  id: string;
+  spark_id: string;
+  version_number: number;
+  label: string | null;
+  content: Record<string, unknown>; // TipTap JSONContent
+  scores: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface SparkItem {
   id: string;
   spark_id: string;
