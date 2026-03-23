@@ -6,6 +6,7 @@ import {
   ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText,
   StickyNote, File, HardDrive, Box, Globe, Database, Paperclip, BarChart2,
   MessageSquare, MessageSquareText, Target, PanelRightClose, PanelRightOpen, BookOpen,
+  Save, History, Pencil, Trash2, ChevronDown,
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
@@ -31,7 +32,8 @@ import type { CommentSubmitData } from '@/components/CommentPopover';
 import { EditorContextProvider, useEditorContext } from '@/lib/editor-context';
 import type { EditorSelection } from '@/lib/editor-context';
 import type { JSONContent } from '@tiptap/react';
-import type { Spark, SparkItem, GeneratedArtifact, ItemType, WebResearchItem, CommentThread, CanvasState } from '@/lib/types';
+import type { Spark, SparkItem, GeneratedArtifact, ItemType, WebResearchItem, CommentThread, CanvasState, SparkVersion } from '@/lib/types';
+import type { ScorePanelHandle } from '@/components/ScorePanel';
 import { PenLine, LayoutDashboard } from 'lucide-react';
 
 type LeftTab = 'items' | 'graph' | 'chat' | 'generate';
@@ -71,6 +73,15 @@ function SparkWorkspacePage() {
   const [localClientId, setLocalClientId] = useState<number | null>(null);
   const [collabNameOverride, setCollabNameOverride] = useState<string | undefined>(undefined);
 
+  // ── Version state ──────────────────────────────
+  const [versions, setVersions] = useState<SparkVersion[]>([]);
+  const [showSavePopover, setShowSavePopover] = useState(false);
+  const [showVersionDropdown, setShowVersionDropdown] = useState(false);
+  const [versionLabel, setVersionLabel] = useState('');
+  const [savingVersion, setSavingVersion] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const scorePanelRef = useRef<ScorePanelHandle>(null);
+
   // ── Debounced editor auto-save ─────────────────────
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const abortRef = useRef<AbortController>(null);
@@ -99,6 +110,7 @@ function SparkWorkspacePage() {
         });
         if (!res.ok) throw new Error('save failed');
         setSaveStatus('idle');
+        setLastSavedAt(new Date());
         // Keep local spark metadata in sync so next merge is correct
         if (currentSpark) {
           setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
@@ -202,6 +214,89 @@ function SparkWorkspacePage() {
     }
   }, [sparkId]);
 
+  const editorCtx = useEditorContext();
+
+  // ── Version management ─────────────────────────
+  const loadVersions = useCallback(async () => {
+    const res = await fetch(`/api/sparks/${sparkId}/versions`);
+    if (res.ok) {
+      const data = await res.json();
+      setVersions(data);
+    }
+  }, [sparkId]);
+
+  const saveVersion = useCallback(async () => {
+    setSavingVersion(true);
+    try {
+      const res = await fetch(`/api/sparks/${sparkId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: versionLabel || null }),
+      });
+      if (!res.ok) throw new Error('Failed to save version');
+      setShowSavePopover(false);
+      setVersionLabel('');
+      await loadVersions();
+    } finally {
+      setSavingVersion(false);
+    }
+  }, [sparkId, versionLabel, loadVersions]);
+
+  const restoreVersion = useCallback(async (versionId: string) => {
+    const res = await fetch(`/api/sparks/${sparkId}/versions/${versionId}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) return;
+    const { content } = await res.json();
+
+    // Update editor with restored content
+    const editor = editorCtx?.getEditor();
+    if (editor) {
+      editor.commands.setContent(content);
+    }
+
+    // Update local spark state so auto-save merges correctly
+    setSpark(prev => prev ? {
+      ...prev,
+      metadata: { ...(prev.metadata ?? {}), editor_content: content },
+    } : prev);
+
+    setShowVersionDropdown(false);
+
+    // Trigger Lytics enrichment first, then full analysis after editor settles
+    const plainText = editor?.getText().trim() ?? '';
+    if (plainText) {
+      fetch('/api/lytics/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: plainText }),
+      }).catch(() => {}); // fire-and-forget; ScorePanel will pick up results
+    }
+
+    // Trigger full AI analysis after a short delay for editor to settle
+    setTimeout(() => {
+      scorePanelRef.current?.triggerAnalysis();
+    }, 500);
+  }, [sparkId, editorCtx]);
+
+  const deleteVersion = useCallback(async (versionId: string) => {
+    await fetch(`/api/sparks/${sparkId}/versions/${versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleted: true }),
+    });
+    await loadVersions();
+  }, [sparkId, loadVersions]);
+
+  const updateVersionLabel = useCallback(async (versionId: string, label: string | null) => {
+    await fetch(`/api/sparks/${sparkId}/versions/${versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    await loadVersions();
+  }, [sparkId, loadVersions]);
+
   // Resizable three-column layout
   const [leftWidth, setLeftWidth] = useState(420);
   const [rightWidth, setRightWidth] = useState(280);
@@ -275,6 +370,31 @@ function SparkWorkspacePage() {
     loadSparkData();
   }, [loadSparkData]);
 
+  // Load versions on mount
+  useEffect(() => {
+    if (sparkId) loadVersions();
+  }, [sparkId, loadVersions]);
+
+  // Tick every 10s to update relative timestamps
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Close popovers on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-version-popover]')) {
+        setShowSavePopover(false);
+        setShowVersionDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Items panel file drop zone
   const itemsDrop = useFileDrop({ sparkId, onItemAdded: loadSparkData });
 
@@ -329,7 +449,6 @@ function SparkWorkspacePage() {
   }, []);
 
   // ── Editor "Ask AI" handler ─────────────────────────
-  const editorCtx = useEditorContext();
   const handleAskAI = useCallback((sel: EditorSelection) => {
     editorCtx?.setSelectedText(sel);
     setLeftTab('chat');
@@ -401,6 +520,18 @@ function SparkWorkspacePage() {
     { id: 'graph', icon: Box, label: 'Knowledge Graph' },
     { id: 'chat', icon: MessageSquare, label: 'Chat' },
   ];
+
+  function timeAgo(date: Date): string {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 5) return 'just now';
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
 
   if (loading) {
     return (
@@ -676,6 +807,147 @@ function SparkWorkspacePage() {
                 {label}
               </button>
             ))}
+
+            {/* Spacer */}
+            <div className="flex-1" />
+
+            {/* Save status indicator */}
+            <span className={`text-[11px] mr-2 ${
+              saveStatus === 'saving'
+                ? 'text-venus-gray-500'
+                : saveStatus === 'error'
+                  ? 'text-red-500'
+                  : 'text-green-500'
+            }`}>
+              {saveStatus === 'saving'
+                ? '● Saving…'
+                : saveStatus === 'error'
+                  ? '✗ Save failed'
+                  : lastSavedAt
+                    ? `✓ Saved ${timeAgo(lastSavedAt)}`
+                    : ''}
+            </span>
+
+            {/* Save Version button */}
+            <div className="relative" data-version-popover>
+              <button
+                onClick={() => setShowSavePopover(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-venus-purple rounded-md hover:bg-venus-purple/90 transition-colors -mb-px"
+              >
+                <Save size={12} />
+                Save Version
+              </button>
+
+              {/* Save Version popover */}
+              {showSavePopover && (
+                <div className="absolute right-0 top-full mt-2 w-72 bg-surface border border-venus-gray-200 rounded-lg shadow-lg p-4 z-50">
+                  <div className="text-sm font-semibold text-venus-gray-800 mb-3">
+                    Save as Version {(versions[0]?.version_number ?? 0) + 1}
+                  </div>
+                  <input
+                    type="text"
+                    value={versionLabel}
+                    onChange={e => setVersionLabel(e.target.value)}
+                    placeholder="Optional label (e.g., 'Final draft')"
+                    className="w-full px-3 py-1.5 text-xs border border-venus-gray-200 rounded-md bg-surface text-venus-gray-800 placeholder-venus-gray-400 focus:outline-none focus:ring-1 focus:ring-venus-purple mb-3"
+                    onKeyDown={e => { if (e.key === 'Enter') saveVersion(); }}
+                    autoFocus
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => { setShowSavePopover(false); setVersionLabel(''); }}
+                      className="px-3 py-1.5 text-xs text-venus-gray-500 hover:text-venus-gray-700 bg-venus-gray-100 rounded-md transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveVersion}
+                      disabled={savingVersion}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-venus-purple rounded-md hover:bg-venus-purple/90 disabled:opacity-50 transition-colors"
+                    >
+                      {savingVersion ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Version history dropdown */}
+            <div className="relative" data-version-popover>
+              <button
+                onClick={() => setShowVersionDropdown(v => !v)}
+                className="flex items-center gap-1 px-2 py-1.5 text-xs text-venus-gray-600 border border-venus-gray-200 rounded-md hover:bg-venus-gray-100 transition-colors -mb-px"
+              >
+                <History size={12} />
+                {versions.length > 0 ? `v${versions[0].version_number}` : 'Versions'}
+                <ChevronDown size={10} />
+              </button>
+
+              {showVersionDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-surface border border-venus-gray-200 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                  <div className="text-xs font-semibold text-venus-gray-600 px-4 pt-3 pb-2 border-b border-venus-gray-100">
+                    Version History
+                  </div>
+                  {versions.length === 0 ? (
+                    <div className="px-4 py-6 text-xs text-venus-gray-400 text-center">
+                      No versions saved yet
+                    </div>
+                  ) : (
+                    versions.map((v) => (
+                      <div
+                        key={v.id}
+                        className="flex items-start gap-2 px-4 py-2.5 hover:bg-venus-gray-50 cursor-pointer border-b border-venus-gray-100 last:border-b-0 group"
+                        onClick={() => restoreVersion(v.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-venus-gray-800">
+                              Version {v.version_number}
+                            </span>
+                            <span className="text-[10px] text-venus-gray-400">
+                              {timeAgo(new Date(v.created_at))}
+                            </span>
+                          </div>
+                          {v.label && (
+                            <div className="text-[11px] text-venus-gray-500 mt-0.5 truncate">
+                              {v.label}
+                            </div>
+                          )}
+                          {v.scores && !!(v.scores as Record<string, unknown>).aiResult && (
+                            <div className="text-[10px] text-green-500 mt-0.5">
+                              Score: {String(((v.scores as Record<string, unknown>).aiResult as Record<string, unknown>)?.overallScore ?? '—')}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const newLabel = prompt('Edit label:', v.label || '');
+                              if (newLabel !== null) updateVersionLabel(v.id, newLabel || null);
+                            }}
+                            className="p-1 text-venus-gray-400 hover:text-venus-gray-600 rounded"
+                            title="Edit label"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete Version ${v.version_number}?`)) deleteVersion(v.id);
+                            }}
+                            className="p-1 text-venus-gray-400 hover:text-red-500 rounded"
+                            title="Delete version"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Editor view */}
@@ -711,16 +983,6 @@ function SparkWorkspacePage() {
             </div>
           )}
 
-          {/* Save status indicator */}
-          {saveStatus !== 'idle' && (
-            <div className={`absolute bottom-3 right-3 text-xs px-2.5 py-1 rounded-full pointer-events-none ${
-              saveStatus === 'saving'
-                ? 'bg-venus-gray-100 text-venus-gray-500'
-                : 'bg-red-50 text-red-500'
-            }`}>
-              {saveStatus === 'saving' ? 'Saving…' : 'Save failed'}
-            </div>
-          )}
         </div>
 
         {/* Right resize handle (only when open) */}
@@ -786,6 +1048,7 @@ function SparkWorkspacePage() {
                 />
               ) : (
                 <ScorePanel
+                  ref={scorePanelRef}
                   sparkItems={items}
                   canvasGroups={canvasState.groups}
                   primaryDomains={(spark.metadata?.primaryDomains as string[]) ?? []}
