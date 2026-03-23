@@ -281,9 +281,7 @@ function SparkWorkspacePage() {
 
   const deleteVersion = useCallback(async (versionId: string) => {
     await fetch(`/api/sparks/${sparkId}/versions/${versionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deleted: true }),
+      method: 'DELETE',
     });
     await loadVersions();
   }, [sparkId, loadVersions]);
