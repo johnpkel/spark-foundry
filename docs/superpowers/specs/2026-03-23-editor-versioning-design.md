@@ -103,6 +103,23 @@ Constraints:
 ]
 ```
 
+### `PATCH /api/sparks/[id]/versions/[versionId]` — Update / Delete Version
+
+**Request body (update label):**
+```json
+{ "label": "Updated label" }
+```
+
+**Request body (delete):**
+```json
+{ "deleted": true }
+```
+
+**Behavior:**
+- If `label` is provided: update the version's label. Pass `null` to clear it.
+- If `deleted` is true: delete the version row.
+- Returns the updated version object, or `{ "deleted": true }` on delete.
+
 ### `POST /api/sparks/[id]/versions/[versionId]/restore` — Restore Version
 
 **Behavior:**
@@ -210,6 +227,7 @@ The ScorePanel does not need to know about versions. It reacts to content change
 |------|--------|
 | `supabase/migrations/` | New migration: create `spark_versions` table |
 | `src/app/api/sparks/[id]/versions/route.ts` | New: POST (save), GET (list) |
+| `src/app/api/sparks/[id]/versions/[versionId]/route.ts` | New: PATCH (update label / delete) |
 | `src/app/api/sparks/[id]/versions/[versionId]/restore/route.ts` | New: POST (restore) |
 | `src/app/spark/[id]/page.tsx` | Add save status indicator, Save Version button, version dropdown, restore handler, scoring trigger |
 | `src/lib/editor-context.tsx` | Add `replaceDocumentJSON()` method for restoring JSON content |
