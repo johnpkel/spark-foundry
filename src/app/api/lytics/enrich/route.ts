@@ -20,7 +20,10 @@ export async function POST(req: Request) {
     }
 
     const result = await enrichEditorContent(text);
-    return NextResponse.json(result);
+    const warning = (result.topics.length === 0 && result.inferredTopics.length === 0 && text.trim().length > 100)
+      ? `Lytics returned no topics for ${text.trim().length} characters of content`
+      : undefined;
+    return NextResponse.json({ ...result, warning });
   } catch (err) {
     console.error('[lytics/enrich]', err instanceof Error ? err.message : err);
     return NextResponse.json(
