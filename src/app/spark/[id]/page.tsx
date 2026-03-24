@@ -80,6 +80,7 @@ function SparkWorkspacePage() {
   const [versionLabel, setVersionLabel] = useState('');
   const [savingVersion, setSavingVersion] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [activeVersionNumber, setActiveVersionNumber] = useState<number | null>(null);
   const scorePanelRef = useRef<ScorePanelHandle>(null);
 
   // ── Debounced editor auto-save ─────────────────────
@@ -236,6 +237,7 @@ function SparkWorkspacePage() {
       if (!res.ok) throw new Error('Failed to save version');
       setShowSavePopover(false);
       setVersionLabel('');
+      setActiveVersionNumber(null);
       await loadVersions();
     } finally {
       setSavingVersion(false);
@@ -247,7 +249,9 @@ function SparkWorkspacePage() {
       method: 'POST',
     });
     if (!res.ok) return;
-    const { content } = await res.json();
+    const { content, version_number } = await res.json();
+
+    setActiveVersionNumber(version_number);
 
     // Update editor with restored content
     const editor = editorCtx?.getEditor();
@@ -877,7 +881,7 @@ function SparkWorkspacePage() {
                 className="flex items-center gap-1 px-2 py-1.5 text-xs text-venus-gray-600 border border-venus-gray-200 rounded-md hover:bg-venus-gray-100 transition-colors -mb-px"
               >
                 <History size={12} />
-                {versions.length > 0 ? `v${versions[0].version_number}` : 'Versions'}
+                {activeVersionNumber ? `v${activeVersionNumber}` : versions.length > 0 ? `v${versions[0].version_number}` : 'Versions'}
                 <ChevronDown size={10} />
               </button>
 
