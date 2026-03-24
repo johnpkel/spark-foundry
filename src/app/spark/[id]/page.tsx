@@ -63,7 +63,8 @@ function SparkWorkspacePage() {
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [typeFilter, setTypeFilter] = useState<ItemType | 'web_research' | 'all'>('all');
   const [lightbox, setLightbox] = useState<{ src: string; alt?: string } | null>(null);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const [rightTab, setRightTab] = useState<RightTab>('discussions');
   const [discussions, setDiscussions] = useState<CommentThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -79,7 +80,7 @@ function SparkWorkspacePage() {
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [versionLabel, setVersionLabel] = useState('');
   const [savingVersion, setSavingVersion] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
   const [activeVersionNumber, setActiveVersionNumber] = useState<number | null>(null);
   const scorePanelRef = useRef<ScorePanelHandle>(null);
 
@@ -110,8 +111,9 @@ function SparkWorkspacePage() {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error('save failed');
-        setSaveStatus('idle');
-        setLastSavedAt(new Date());
+        setSaveStatus('saved');
+        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 3000);
         // Keep local spark metadata in sync so next merge is correct
         if (currentSpark) {
           setSpark(prev => prev ? { ...prev, metadata: merged } : prev);
@@ -162,6 +164,7 @@ function SparkWorkspacePage() {
       discAbortRef.current?.abort();
       if (canvasSaveTimerRef.current) clearTimeout(canvasSaveTimerRef.current);
       canvasAbortRef.current?.abort();
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
     };
   }, []);
 
@@ -814,21 +817,21 @@ function SparkWorkspacePage() {
             <div className="flex-1" />
 
             {/* Save status indicator */}
-            <span className={`text-[11px] mr-2 ${
-              saveStatus === 'saving'
-                ? 'text-venus-gray-500'
-                : saveStatus === 'error'
-                  ? 'text-red-500'
-                  : 'text-green-500'
-            }`}>
-              {saveStatus === 'saving'
-                ? '● Saving…'
-                : saveStatus === 'error'
-                  ? '✗ Save failed'
-                  : lastSavedAt
-                    ? `✓ Saved ${timeAgo(lastSavedAt)}`
-                    : ''}
-            </span>
+            {saveStatus !== 'idle' && (
+              <span className={`text-[11px] mr-2 ${
+                saveStatus === 'saving'
+                  ? 'text-venus-gray-500'
+                  : saveStatus === 'error'
+                    ? 'text-red-500'
+                    : 'text-green-500'
+              }`}>
+                {saveStatus === 'saving'
+                  ? '● Saving…'
+                  : saveStatus === 'error'
+                    ? '✗ Save failed'
+                    : '✓ Saved'}
+              </span>
+            )}
 
             {/* Create Version button */}
             <div className="relative" data-version-popover>
