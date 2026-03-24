@@ -6,7 +6,7 @@ import {
   ArrowLeft, Plus, Wand2, LayoutGrid, Loader2, Link2, Image, FileText,
   StickyNote, File, HardDrive, Box, Globe, Database, Paperclip, BarChart2,
   MessageSquare, MessageSquareText, Target, PanelRightClose, PanelRightOpen, BookOpen,
-  Save, History, Pencil, Trash2, ChevronDown,
+  Save, History, Pencil, Trash2,
 } from 'lucide-react';
 import { SlackIcon } from '@/components/SlackIcon';
 import IntegrationsStatus from '@/components/IntegrationsStatus';
@@ -830,17 +830,17 @@ function SparkWorkspacePage() {
                     : ''}
             </span>
 
-            {/* Save Version button */}
+            {/* Create Version button */}
             <div className="relative" data-version-popover>
               <button
                 onClick={() => setShowSavePopover(v => !v)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-venus-purple rounded-md hover:bg-venus-purple/90 transition-colors -mb-px"
               >
                 <Save size={12} />
-                Save Version
+                Create Version
               </button>
 
-              {/* Save Version popover */}
+              {/* Create Version popover */}
               {showSavePopover && (
                 <div className="absolute right-0 top-full mt-2 w-72 bg-surface border border-venus-gray-200 rounded-lg shadow-lg p-4 z-50">
                   <div className="text-sm font-semibold text-venus-gray-800 mb-3">
@@ -880,9 +880,7 @@ function SparkWorkspacePage() {
                 onClick={() => setShowVersionDropdown(v => !v)}
                 className="flex items-center gap-1 px-2 py-1.5 text-xs text-venus-gray-600 border border-venus-gray-200 rounded-md hover:bg-venus-gray-100 transition-colors -mb-px"
               >
-                <History size={12} />
-                {activeVersionNumber ? `v${activeVersionNumber}` : versions.length > 0 ? `v${versions[0].version_number}` : 'Versions'}
-                <ChevronDown size={10} />
+                <History size={14} />
               </button>
 
               {showVersionDropdown && (
