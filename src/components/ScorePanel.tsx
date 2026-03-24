@@ -20,6 +20,7 @@ import {
   ExternalLink,
   ChevronDown,
   Code,
+  RefreshCw,
 } from 'lucide-react';
 import { useEditorContext } from '@/lib/editor-context';
 import type { SparkItem, CanvasGroup } from '@/lib/types';
@@ -546,6 +547,25 @@ function formatProfileCount(count: number): string {
   return String(count);
 }
 
+/* ── Loading skeleton for Lytics sections ──── */
+
+function LyticsSectionSkeleton({ rows = 3, status }: { rows?: number; status?: string }) {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <div className="h-3 rounded bg-venus-gray-100 flex-1" style={{ width: `${70 - i * 10}%` }} />
+          <div className="h-3 w-8 rounded bg-venus-gray-100 shrink-0" />
+        </div>
+      ))}
+      <div className="flex items-center gap-1.5 pt-1">
+        <Loader2 size={10} className="animate-spin text-venus-gray-300" />
+        <span className="text-[10px] text-venus-gray-300">{status || 'Loading from Lytics…'}</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Component ─────────────────────────── */
 
 const MOCK_DEBOUNCE_MS = 500;
@@ -572,6 +592,10 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
   const [lyticsAudiences, setLyticsAudiences] = useState<{ name: string; alignment: number; size: number }[]>(initialLyticsCache?.audiences ?? []);
   const [lyticsOpportunity, setLyticsOpportunity] = useState<{ topic: string; userCount: number; docCount: number; opportunityScore: number }[]>(initialLyticsCache?.opportunity ?? []);
   const [isEnriching, setIsEnriching] = useState(false);
+  const [lyticsInitialLoading, setLyticsInitialLoading] = useState(
+    !initialLyticsCache?.topics?.length && !initialLyticsCache?.audiences?.length
+  );
+  const [lyticsStatus, setLyticsStatus] = useState('');
   const [lyticsAid, setLyticsAid] = useState(initialLyticsCache?.aid ?? '');
   const [lastFetchedAt, setLastFetchedAt] = useState<number>(
     initialLyticsCache?.lastUpdated ? new Date(initialLyticsCache.lastUpdated).getTime() : 0
@@ -580,6 +604,11 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
 
   const enrichDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const lastEnrichedTextRef = useRef('');
+  const hasInitiallyEnriched = useRef(
+    !!(initialLyticsCache?.topics?.length || initialLyticsCache?.audiences?.length)
+  );
+  const lyticsAidRef = useRef(lyticsAid);
+  lyticsAidRef.current = lyticsAid;
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const abortRef = useRef<AbortController>(null);
@@ -604,6 +633,173 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
       }).catch(() => {});
     }, 1000);
   }, [sparkId]);
+
+  /**
+   * Progressive Lytics refresh — runs each step sequentially, updating
+   * the UI and logging to console/network as each piece of data arrives.
+   *
+   * Steps:
+   *  1. Check Lytics availability (/api/lytics/data)
+   *  2. Fetch opportunity data (from step 1 response)
+   *  3. Enrich editor content → topics (/api/lytics/enrich)
+   *  4. Enrich editor content → audiences (from step 3 response)
+   *  5. Persist cache
+   */
+  const refreshLytics = useCallback(async () => {
+    const editor = editorCtx?.getEditor();
+    const text = editor?.getText().trim() ?? '';
+
+    setIsEnriching(true);
+    setLyticsStatus('Connecting to Lytics CDP…');
+    console.group('[Lytics] Refresh started');
+    console.log('[Lytics] Editor text length:', text.length);
+
+    try {
+      // ── Step 1: Check availability + fetch opportunity ──
+      console.log('[Lytics] → GET /api/lytics/data');
+      const dataRes = await fetch('/api/lytics/data');
+      const globalData = await dataRes.json();
+      console.log('[Lytics] ← /api/lytics/data', {
+        available: globalData.available,
+        aid: globalData.aid,
+        opportunityCount: globalData.opportunity?.length ?? 0,
+        segmentCount: globalData.segments?.length ?? 0,
+      });
+
+      if (!globalData.available) {
+        setLyticsStatus('Lytics not connected — add your API token in Integrations');
+        console.warn('[Lytics] Lytics is not configured — skipping enrichment');
+        setLyticsInitialLoading(false);
+        setIsEnriching(false);
+        setTimeout(() => setLyticsStatus(''), 3000);
+        console.groupEnd();
+        return;
+      }
+
+      setLyticsAvailable(true);
+      if (globalData.aid) {
+        setLyticsAid(String(globalData.aid));
+        lyticsAidRef.current = String(globalData.aid);
+      }
+
+      // ── Step 2: Process opportunity data (progressive) ──
+      if (globalData.opportunity?.length) {
+        setLyticsStatus(`Fetching content opportunity scores across ${globalData.opportunity.length} topics…`);
+        console.log('[Lytics] Processing', globalData.opportunity.length, 'opportunity topics');
+
+        const opTopics = globalData.opportunity
+          .filter((t: Record<string, unknown>) => {
+            const users = (t.dimensions as { label: string; value: number }[])?.find((d) => d.label === 'User Count')?.value ?? 0;
+            return users > 0;
+          })
+          .map((t: Record<string, unknown>) => {
+            const dims = t.dimensions as { label: string; value: number }[];
+            const users = dims?.find((d) => d.label === 'User Count')?.value ?? 0;
+            const docs = dims?.find((d) => d.label === 'Document Count')?.value ?? 0;
+            return { topic: t.topic as string, userCount: users, docCount: docs, opportunityScore: 0 };
+          });
+        const maxUsers = Math.max(...opTopics.map((t: { userCount: number }) => t.userCount), 1);
+        const maxDocs = Math.max(...opTopics.map((t: { docCount: number }) => t.docCount), 1);
+        for (const t of opTopics) {
+          t.opportunityScore = Math.round((t.userCount / maxUsers) * (1 - t.docCount / maxDocs) * 100);
+        }
+        opTopics.sort((a: { opportunityScore: number }, b: { opportunityScore: number }) => b.opportunityScore - a.opportunityScore);
+        const sliced = opTopics.slice(0, 20);
+        setLyticsOpportunity(sliced);
+        console.log('[Lytics] ✓ Opportunity loaded:', sliced.length, 'topics');
+      }
+
+      // ── Step 3: Enrich editor content → topics + audiences ──
+      if (text.length < 10) {
+        setLyticsStatus('Need at least 10 characters of content to analyze');
+        console.warn('[Lytics] Editor text <10 chars — skipping enrichment');
+        setLyticsInitialLoading(false);
+        setIsEnriching(false);
+        setTimeout(() => setLyticsStatus(''), 3000);
+        console.groupEnd();
+        return;
+      }
+
+      setLyticsStatus(`Analyzing ${text.length.toLocaleString()} characters through Lytics NLP…`);
+      console.log('[Lytics] → POST /api/lytics/enrich (' + text.length + ' chars)');
+
+      const enrichRes = await fetch('/api/lytics/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const enrichData = await enrichRes.json();
+
+      if (enrichData.error) {
+        console.error('[Lytics] ← Enrich error:', enrichData.error);
+        setLyticsStatus('Lytics enrichment error: ' + enrichData.error);
+        setTimeout(() => setLyticsStatus(''), 5000);
+        return;
+      }
+      if (enrichData.warning) {
+        console.warn('[Lytics] ⚠', enrichData.warning);
+      }
+
+      // Progressively set topics first
+      if (enrichData.topics) {
+        setLyticsTopics(enrichData.topics);
+        console.log('[Lytics] ✓ Topics:', enrichData.topics.length, enrichData.topics.map((t: { name: string }) => t.name));
+      }
+      if (enrichData.inferredTopics) {
+        setLyticsInferredTopics(enrichData.inferredTopics);
+        console.log('[Lytics] ✓ Inferred topics:', enrichData.inferredTopics.length);
+      }
+
+      // ── Step 4: Audiences arrive from same response ──
+      const topicCount = enrichData.topics?.length ?? 0;
+      if (topicCount > 0) {
+        setLyticsStatus(`Found ${topicCount} topics — aligning with audience segments…`);
+      } else {
+        setLyticsStatus('No topics detected — aligning with audience segments…');
+      }
+      // Small delay to make progressive population visible
+      await new Promise((r) => setTimeout(r, 150));
+
+      if (enrichData.audiences) {
+        setLyticsAudiences(enrichData.audiences);
+        console.log('[Lytics] ✓ Audiences:', enrichData.audiences.length, enrichData.audiences.slice(0, 3).map((a: { name: string; alignment: number }) => `${a.name} (${a.alignment}%)`));
+      }
+
+      lastEnrichedTextRef.current = text;
+      setLastFetchedAt(Date.now());
+      hasInitiallyEnriched.current = true;
+
+      // ── Step 5: Persist to Spark metadata ──
+      setLyticsStatus('Caching results to Spark metadata…');
+      persistLyticsCache({
+        topics: enrichData.topics, inferredTopics: enrichData.inferredTopics,
+        audiences: enrichData.audiences, opportunity: undefined,
+        aid: lyticsAidRef.current,
+      });
+
+      const tCount = enrichData.topics?.length ?? 0;
+      const aCount = enrichData.audiences?.length ?? 0;
+      if (tCount > 0 || aCount > 0) {
+        const parts = [];
+        if (tCount > 0) parts.push(`${tCount} topic${tCount !== 1 ? 's' : ''}`);
+        if (aCount > 0) parts.push(`${aCount} audience segment${aCount !== 1 ? 's' : ''}`);
+        setLyticsStatus(`Loaded ${parts.join(' and ')}`);
+      } else {
+        setLyticsStatus('No topics detected — try adding more content');
+      }
+      console.log(`[Lytics] ✓ Refresh complete: ${tCount} topics, ${aCount} audiences`);
+      setTimeout(() => setLyticsStatus(''), 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Lytics] Refresh failed:', msg);
+      setLyticsStatus('Lytics error: ' + msg);
+      setTimeout(() => setLyticsStatus(''), 5000);
+    } finally {
+      setIsEnriching(false);
+      setLyticsInitialLoading(false);
+      console.groupEnd();
+    }
+  }, [editorCtx, persistLyticsCache]);
 
   /** Extract text content from SparkItems referenced by GroupBlock nodes */
   const extractReferencedItemTexts = useCallback((): string[] => {
@@ -784,41 +980,52 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch cached Lytics data on mount
+  // ── Initial Lytics load on mount ──────────────────
+  // Poll for both editor availability AND content readiness (Yjs sync),
+  // then run the full progressive refresh. The editorCtx ref is stable
+  // so we can't rely on effect re-runs — we must poll.
+  const mountTriggered = useRef(false);
   useEffect(() => {
-    fetch('/api/lytics/data')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.available) {
-          setLyticsAvailable(true);
-          if (data.aid) setLyticsAid(String(data.aid));
-          setLastFetchedAt(Date.now());
-          if (data.opportunity?.length) {
-            const topics = data.opportunity
-              .filter((t: Record<string, unknown>) => {
-                const users = (t.dimensions as { label: string; value: number }[])?.find((d) => d.label === 'User Count')?.value ?? 0;
-                return users > 0;
-              })
-              .map((t: Record<string, unknown>) => {
-                const dims = t.dimensions as { label: string; value: number }[];
-                const users = dims?.find((d) => d.label === 'User Count')?.value ?? 0;
-                const docs = dims?.find((d) => d.label === 'Document Count')?.value ?? 0;
-                return { topic: t.topic as string, userCount: users, docCount: docs, opportunityScore: 0 };
-              });
-            const maxUsers = Math.max(...topics.map((t: { userCount: number }) => t.userCount), 1);
-            const maxDocs = Math.max(...topics.map((t: { docCount: number }) => t.docCount), 1);
-            for (const t of topics) {
-              t.opportunityScore = Math.round((t.userCount / maxUsers) * (1 - t.docCount / maxDocs) * 100);
-            }
-            topics.sort((a: { opportunityScore: number }, b: { opportunityScore: number }) => b.opportunityScore - a.opportunityScore);
-            const sliced = topics.slice(0, 20);
-            setLyticsOpportunity(sliced);
-            persistLyticsCache({ opportunity: sliced, aid: String(data.aid || '') });
-          }
+    if (mountTriggered.current || hasInitiallyEnriched.current) {
+      setLyticsInitialLoading(false);
+      return;
+    }
+    mountTriggered.current = true;
+
+    let attempts = 0;
+    const poll = setInterval(() => {
+      attempts++;
+      const editor = editorCtx?.getEditor();
+      if (!editor) {
+        // Editor not registered yet — keep waiting
+        if (attempts >= 20) {
+          // 10s — give up
+          clearInterval(poll);
+          console.warn('[Lytics] Editor not available after 10s — skipping initial load');
+          setLyticsInitialLoading(false);
         }
-      })
-      .catch(() => {});
-  }, []);
+        return;
+      }
+      const text = editor.getText().trim();
+      if (text.length >= 10) {
+        clearInterval(poll);
+        refreshLytics();
+      } else if (attempts >= 20) {
+        // 10s total — try anyway (will show appropriate status)
+        clearInterval(poll);
+        refreshLytics();
+      }
+    }, 500);
+
+    // Try immediately in case editor + content are already ready
+    const editor = editorCtx?.getEditor();
+    if (editor && editor.getText().trim().length >= 10) {
+      clearInterval(poll);
+      refreshLytics();
+    }
+
+    return () => clearInterval(poll);
+  }, [editorCtx, refreshLytics]);
 
   // Debounced Lytics enrichment on editor changes
   useEffect(() => {
@@ -833,40 +1040,19 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
         if (text.length < 10) return;
         if (text === lastEnrichedTextRef.current) return;
         if (Math.abs(text.length - lastEnrichedTextRef.current.length) < 50 && lastEnrichedTextRef.current) return;
-        lastEnrichedTextRef.current = text;
-
-        setIsEnriching(true);
-        fetch('/api/lytics/enrich', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.topics) setLyticsTopics(data.topics);
-            if (data.inferredTopics) setLyticsInferredTopics(data.inferredTopics);
-            if (data.audiences) setLyticsAudiences(data.audiences);
-            // Persist to Spark metadata
-            setLastFetchedAt(Date.now());
-            persistLyticsCache({
-              topics: data.topics, inferredTopics: data.inferredTopics,
-              audiences: data.audiences, aid: lyticsAid,
-            });
-          })
-          .catch(() => {})
-          .finally(() => setIsEnriching(false));
+        // Debounced change detected — run full progressive refresh
+        console.log('[Lytics] Editor change detected, re-enriching…');
+        refreshLytics();
       }, 2000);
     };
 
     editor.on('update', handler);
-    const initialText = editor.getText().trim();
-    if (initialText.length >= 10) handler();
 
     return () => {
       editor.off('update', handler);
       if (enrichDebounceRef.current) clearTimeout(enrichDebounceRef.current);
     };
-  }, [editorCtx, lyticsAvailable]);
+  }, [editorCtx, lyticsAvailable, refreshLytics]);
 
   const [showRawData, setShowRawData] = useState(false);
   const [expandAll, setExpandAll] = useState(false);
@@ -946,8 +1132,8 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
       {/* Detected Keywords / Topics */}
       <Section
         icon={Compass}
-        title={lyticsTopics.length > 0 ? 'Lytics Topics' : aiResult ? 'Detected Topics' : 'Detected Keywords'}
-        tooltip={lyticsTopics.length > 0
+        title={lyticsTopics.length > 0 ? 'Lytics Topics' : lyticsInitialLoading ? 'Lytics Topics' : aiResult ? 'Detected Topics' : 'Detected Keywords'}
+        tooltip={lyticsTopics.length > 0 || lyticsInitialLoading
           ? 'Topics extracted by Lytics NLP from your editor content. Scores show classification confidence. Higher scores mean the content strongly signals this topic to Lytics\u2019 audience engine.'
           : undefined}
         sourceUrl={lyticsTopics.length > 0 ? lyticsUrl(lyticsAid, 'content/topics') : undefined}
@@ -959,6 +1145,8 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
             data={{ topics: lyticsTopics, inferredTopics: lyticsInferredTopics } as unknown as Record<string, unknown>}
             formula="POST /v2/content/enrich → topics{name: confidence 0-1} × 100"
           />
+        ) : lyticsInitialLoading && lyticsTopics.length === 0 ? (
+          <LyticsSectionSkeleton rows={4} status={lyticsStatus} />
         ) : lyticsTopics.length > 0 ? (
           <div className="space-y-3.5">
             {lyticsTopics.slice(0, 8).map((t) => (
@@ -1010,8 +1198,33 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
         )}
       </Section>
 
-      {/* Lytics: Audience Fit (always visible when available) */}
-      {lyticsAudiences.length > 0 && (
+      {/* Lytics refresh button + live status */}
+      {(lyticsAvailable || lyticsInitialLoading) && (
+        <div className="flex items-center justify-between mb-2 -mt-1 min-h-[18px]">
+          {lyticsStatus ? (
+            <div className="flex items-center gap-1.5">
+              {isEnriching && <Loader2 size={10} className="animate-spin text-venus-purple" />}
+              <span className="text-[10px] text-venus-gray-500">{lyticsStatus}</span>
+            </div>
+          ) : <div />}
+          <button
+            onClick={refreshLytics}
+            disabled={isEnriching}
+            className="flex items-center gap-1 text-[10px] text-venus-gray-400 hover:text-venus-purple transition-colors disabled:opacity-50"
+            title="Refresh Lytics scores"
+          >
+            <RefreshCw size={10} className={isEnriching ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
+      )}
+
+      {/* Lytics: Audience Fit (always visible when available or loading) */}
+      {lyticsInitialLoading && lyticsAudiences.length === 0 ? (
+        <Section icon={Users} title="Audience Fit">
+          <LyticsSectionSkeleton rows={4} status={lyticsStatus} />
+        </Section>
+      ) : lyticsAudiences.length > 0 ? (
         <Section
           icon={Users}
           title="Audience Fit"
@@ -1057,10 +1270,14 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
             </div>
           )}
         </Section>
-      )}
+      ) : null}
 
-      {/* Lytics: Content Opportunity (always visible when available) */}
-      {lyticsOpportunity.length > 0 && lyticsTopics.length > 0 && (
+      {/* Lytics: Content Opportunity (always visible when available or loading) */}
+      {lyticsInitialLoading && (lyticsOpportunity.length === 0 || lyticsTopics.length === 0) ? (
+        <Section icon={BarChart3} title="Content Opportunity">
+          <LyticsSectionSkeleton rows={3} status={lyticsStatus} />
+        </Section>
+      ) : lyticsOpportunity.length > 0 && lyticsTopics.length > 0 ? (
         <Section
           icon={BarChart3}
           title="Content Opportunity"
@@ -1104,7 +1321,7 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
             </div>
           )}
         </Section>
-      )}
+      ) : null}
 
       {/* Analyze button */}
       <div className="mb-5">

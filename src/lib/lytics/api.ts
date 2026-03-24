@@ -19,7 +19,6 @@ import type {
 export type { EnrichResult, EnrichResult as ClassifyResult, AudienceAlignment, OpportunityTopic };
 
 const LYTICS_BASE = 'https://api.lytics.io';
-const MAX_ENRICH_CHARS = 2000;
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -48,32 +47,37 @@ async function authHeadersGet(): Promise<HeadersInit> {
 // ─── Content: Enrich (classify text → topics) ───────
 
 export async function enrichContent(text: string): Promise<EnrichResult> {
-  const truncated = text.slice(0, MAX_ENRICH_CHARS);
   const url = `${LYTICS_BASE}/v2/content/enrich`;
   const token = await getToken();
+
+  console.log(`[lytics/enrich] Sending ${text.length} chars to Lytics`);
 
   // NOTE: This endpoint requires form-encoded body, NOT JSON.
   // Sending JSON causes Lytics to classify the JSON structure itself.
   try {
     const { data } = await traceFetch<{ data: EnrichResult }>(
       'lytics',
-      `enrich content (${truncated.length} chars)`,
+      `enrich content (${text.length} chars)`,
       url,
       () => fetch(url, {
         method: 'POST',
         headers: { Authorization: token, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `text=${encodeURIComponent(truncated)}`,
+        body: `text=${encodeURIComponent(text)}`,
       }),
       { method: 'POST' },
     );
 
     const result = (data as { data?: EnrichResult })?.data;
+    const topicCount = Object.keys(result?.topics ?? {}).length;
+    const inferredCount = Object.keys(result?.inferred_topics ?? {}).length;
+    console.log(`[lytics/enrich] Result: ${topicCount} topics, ${inferredCount} inferred`);
+
     return {
       topics: result?.topics ?? {},
       inferred_topics: result?.inferred_topics ?? {},
     };
-  } catch {
-    // Lytics may return 500 "Could not classify content" for some inputs
+  } catch (err) {
+    console.error('[lytics/enrich] API error:', err instanceof Error ? err.message : err);
     return { topics: {}, inferred_topics: {} };
   }
 }
