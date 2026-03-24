@@ -834,7 +834,7 @@ function SparkWorkspacePage() {
             <div className="relative" data-version-popover>
               <button
                 onClick={() => setShowSavePopover(v => !v)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-venus-purple rounded-md hover:bg-venus-purple/90 transition-colors -mb-px"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-venus-gray-600 border border-venus-gray-200 rounded-md hover:bg-venus-gray-100 transition-colors -mb-px"
               >
                 <Save size={12} />
                 Create Version
