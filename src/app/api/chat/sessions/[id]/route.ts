@@ -12,7 +12,7 @@ export async function GET(
     supabaseAdmin.from('chat_sessions').select('*').eq('id', id).single(),
     supabaseAdmin
       .from('chat_messages')
-      .select('id, role, content, created_at')
+      .select('id, role, content, metadata, created_at')
       .eq('session_id', id)
       .order('created_at', { ascending: true }),
   ]);

@@ -63,11 +63,11 @@ const QUALITY_TOOL: Anthropic.Tool = {
 
 const STRATEGIC_TOOL: Anthropic.Tool = {
   name: 'submit_strategic_analysis',
-  description: 'Submit strategic content analysis based on Lytics audience intelligence data.',
+  description: 'Submit strategic content analysis. When Lytics audience data is available, compare content against it. Otherwise, perform a general content gap analysis based on the content itself.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      contentComparison: { type: 'string', description: 'How the content aligns with Lytics audience data — what aligns, what is missing, what is unexpected' },
+      contentComparison: { type: 'string', description: 'Gap analysis: when Lytics data is available, how the content aligns with audience data — what aligns, what is missing, what is unexpected. Without Lytics data, identify content gaps, missing perspectives, underexplored topics, and strategic improvement opportunities based on the content itself.' },
       recommendations: {
         type: 'object',
         properties: {
@@ -269,23 +269,27 @@ Guidelines:
 - Read the actual content carefully. Identify real topics, themes, and audiences — don't fabricate generic ones.
 - Be honest with scores. Not everything deserves 85+. Short or thin content should score lower.
 - For channel fit: assess how well the content format/style suits each channel (Blog, Email, Social, Web Page, Newsletter).
-${hasLyticsData ? `
-You also have access to real Lytics audience intelligence data. Use it to provide grounded, data-driven strategic analysis.
-
-${lyticsContext}
 
 You MUST call BOTH tools:
 1. submit_content_analysis — quality scoring and channel fit
-2. submit_strategic_analysis — Lytics-informed strategic recommendations
+2. submit_strategic_analysis — gap analysis and strategic recommendations
+${hasLyticsData ? `
+You have access to real Lytics audience intelligence data. Use it to provide grounded, data-driven strategic analysis.
+
+${lyticsContext}
 
 For strategic analysis:
 - COMPARE: How does this content align with the Lytics audience data? What topics are well-covered? What's missing?
 - RECOMMEND: Content updates, campaign concepts leveraging behavioral data, underserved audiences, content gaps where user interest outpaces content.
 - Use real audience names and sizes from the data above.
 ` : `
-You MUST call the submit_content_analysis tool with your analysis.`}`;
+No Lytics audience data is available for this content. For strategic analysis:
+- GAP ANALYSIS: Identify what perspectives, topics, or angles the content is missing. What questions would a reader still have? What related topics are left unexplored?
+- RECOMMEND: Content updates to strengthen coverage, campaign ideas based on the content's themes, potential audiences that could be better served, and content gaps worth filling.
+- For underservedAudiences and contentGaps, use your best estimates for size/userCount/docCount (use 0 if unknown).
+`}`;
 
-        const tools = hasLyticsData ? [QUALITY_TOOL, STRATEGIC_TOOL] : [QUALITY_TOOL];
+        const tools = [QUALITY_TOOL, STRATEGIC_TOOL];
 
         const start = Date.now();
         addLogEntry({

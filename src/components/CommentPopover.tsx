@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
+import { useEmojiInput } from '@/hooks/useEmojiInput';
+import type { EmojiEntry } from '@/lib/emoji-data';
 
 export interface CommentSubmitData {
   threadId: string;
@@ -50,6 +52,7 @@ export default function CommentPopover({
   const [mentionIdx, setMentionIdx] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const emoji = useEmojiInput();
 
   // Focus textarea on mount
   useEffect(() => {
@@ -103,6 +106,16 @@ export default function CommentPopover({
   }, [text, mentionQuery]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Emoji dropdown navigation (takes priority when active)
+    const ta = textareaRef.current;
+    if (ta && emoji.active) {
+      const handled = emoji.onKeyDown(e, text, ta.selectionStart, (newText, newCursor) => {
+        setText(newText);
+        setTimeout(() => { ta.setSelectionRange(newCursor, newCursor); ta.focus(); }, 0);
+      });
+      if (handled) return;
+    }
+
     // Mention dropdown navigation
     if (mentionQuery !== null && filteredMentions.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx(i => Math.min(i + 1, filteredMentions.length - 1)); return; }
@@ -112,6 +125,35 @@ export default function CommentPopover({
 
     if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit(); return; }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    // Check for emoticon shortcode conversion
+    const converted = emoji.onChange(value, cursorPos);
+    if (converted !== value) {
+      setText(converted);
+      // Adjust cursor for the replacement
+      const diff = value.length - converted.length;
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (ta) { ta.setSelectionRange(cursorPos - diff, cursorPos - diff); }
+      }, 0);
+    } else {
+      setText(value);
+    }
+
+    detectMention(converted !== value ? converted : value, cursorPos);
+  };
+
+  const selectEmoji = (item: EmojiEntry) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const { text: newText, cursor } = emoji.insertEmoji(text, ta.selectionStart, item.emoji);
+    setText(newText);
+    setTimeout(() => { ta.setSelectionRange(cursor, cursor); ta.focus(); }, 0);
   };
 
   const handleSubmit = () => {
@@ -161,18 +203,38 @@ export default function CommentPopover({
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            detectMention(e.target.value, e.target.selectionStart);
-          }}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
-          onClick={(e) => detectMention(text, (e.target as HTMLTextAreaElement).selectionStart)}
-          placeholder="Add a comment… (@ to mention)"
+          onClick={(e) => {
+            const cursorPos = (e.target as HTMLTextAreaElement).selectionStart;
+            detectMention(text, cursorPos);
+            emoji.onChange(text, cursorPos);
+          }}
+          placeholder="Add a comment… (@ to mention, : for emoji)"
           rows={3}
           className="w-full text-sm bg-venus-gray-50 border border-venus-gray-200 rounded-md px-2.5 py-2 outline-none focus:border-venus-purple resize-none"
         />
+        {/* Emoji dropdown */}
+        {emoji.active && (
+          <div className="absolute bottom-0 left-3 right-3 translate-y-full z-10 bg-card-bg border border-venus-gray-200 rounded-md shadow-md py-1 max-h-36 overflow-y-auto">
+            {emoji.results.map((item, i) => (
+              <button
+                key={item.name}
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); selectEmoji(item); }}
+                className={`w-full text-left px-3 py-1.5 text-sm transition-colors flex items-center gap-2.5 ${
+                  i === emoji.selectedIndex
+                    ? 'bg-venus-purple-light text-venus-purple'
+                    : 'text-venus-gray-700 hover:bg-venus-gray-100'
+                }`}
+              >
+                <span className="text-base leading-none">{item.emoji}</span>
+                <span className="truncate">{item.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {/* Mention dropdown */}
-        {mentionQuery !== null && filteredMentions.length > 0 && (
+        {!emoji.active && mentionQuery !== null && filteredMentions.length > 0 && (
           <div className="absolute bottom-0 left-3 right-3 translate-y-full z-10 bg-card-bg border border-venus-gray-200 rounded-md shadow-md py-1 max-h-36 overflow-y-auto">
             {filteredMentions.map((item, i) => (
               <button
