@@ -56,8 +56,8 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   use_skill: 'read',
   get_skill_resource: 'read',
   draft_skill: 'read',
-  // Editor tools
-  update_editor: 'write',
+  // Editor tools — client-side, user controls application in editor
+  update_editor: 'read',
 };
 
 export function getToolRisk(name: string): ToolRisk {

@@ -23,7 +23,7 @@ import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion
 import {
   Bold, Italic, Strikethrough, Code, Heading1, Heading2, Heading3,
   List, ListOrdered, Quote, Minus, CheckSquare,
-  ImageIcon, Table2, Pencil, Sparkles, MessageSquareText, Layers,
+  ImageIcon, Table2, Pencil, Sparkles, MessageSquareText, Layers, Smile,
 } from 'lucide-react';
 import type { CanvasGroup, SparkItem } from '@/lib/types';
 import { DrawingExtension } from './editor/DrawingExtension';
@@ -37,6 +37,11 @@ import type { MentionListRef, MentionItem } from './editor/MentionList';
 import SlashCommand from './editor/SlashCommand';
 import SlashCommandList, { filterSlashCommands } from './editor/SlashCommandList';
 import type { SlashCommandListRef, SlashCommandItem } from './editor/SlashCommandList';
+import EmojiSuggestion from './editor/EmojiSuggestion';
+import EmojiList from './editor/EmojiList';
+import type { EmojiListRef } from './editor/EmojiList';
+import EmojiPicker from './editor/EmojiPicker';
+import { searchEmoji, type EmojiEntry } from '@/lib/emoji-data';
 import DropOverlay from './DropOverlay';
 import { useFileDrop } from '@/hooks/useFileDrop';
 
@@ -269,6 +274,67 @@ const slashCommandSuggestion = {
   },
 };
 
+// ─── Emoji suggestion config ─────────────────────────
+const emojiSuggestionConfig = {
+  items: ({ query }: { query: string }): EmojiEntry[] => query.length >= 2 ? searchEmoji(query, 8) : [],
+
+  // Minimum query length enforced via items — return empty array for short queries
+  allow: () => true,
+
+  render: () => {
+    let component: ReactRenderer<EmojiListRef> | null = null;
+    let popup: HTMLDivElement | null = null;
+
+    const position = (props: SuggestionProps) => {
+      const rect = props.clientRect?.();
+      if (rect && popup) {
+        popup.style.top = `${rect.bottom + window.scrollY + 4}px`;
+        popup.style.left = `${rect.left + window.scrollX}px`;
+      }
+    };
+
+    return {
+      onStart(props: SuggestionProps) {
+        popup = document.createElement('div');
+        popup.style.position = 'absolute';
+        popup.style.zIndex = '9999';
+        document.body.appendChild(popup);
+
+        component = new ReactRenderer(EmojiList, {
+          props,
+          editor: props.editor,
+        });
+        popup.appendChild(component.element);
+        position(props);
+      },
+
+      onUpdate(props: SuggestionProps) {
+        component?.updateProps(props);
+        position(props);
+      },
+
+      onKeyDown(props: SuggestionKeyDownProps) {
+        if (props.event.key === 'Escape') {
+          popup?.remove();
+          return true;
+        }
+        return component?.ref?.onKeyDown(props) ?? false;
+      },
+
+      onExit() {
+        component?.destroy();
+        popup?.remove();
+        popup = null;
+        component = null;
+      },
+    };
+  },
+
+  command: ({ editor, range, props: item }: { editor: Editor; range: { from: number; to: number }; props: EmojiEntry }) => {
+    editor.chain().focus().deleteRange(range).insertContent(item.emoji).run();
+  },
+};
+
 // ─── Toolbar helpers ─────────────────────────────────
 
 function EditorStatsBar({ editor }: { editor: Editor }) {
@@ -383,6 +449,7 @@ export default function SparkEditor({
 }: SparkEditorProps) {
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [commentPopover, setCommentPopover] = useState<CommentPopoverState | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -521,6 +588,11 @@ export default function SparkEditor({
       // Slash commands
       SlashCommand.configure({
         suggestion: slashCommandSuggestion,
+      }),
+
+      // Emoji `:` autocomplete + emoticon shortcodes
+      EmojiSuggestion.configure({
+        suggestion: emojiSuggestionConfig,
       }),
 
       // Real-time collaboration via Yjs CRDT
@@ -719,6 +791,21 @@ export default function SparkEditor({
 
         {/* Rule */}
         <ToolbarBtn icon={Minus} label="Horizontal rule" onClick={() => e.chain().focus().setHorizontalRule().run()} />
+
+        <Sep />
+
+        {/* Emoji picker */}
+        <div className="relative">
+          <ToolbarBtn icon={Smile} label="Insert emoji" onClick={() => setEmojiPickerOpen(v => !v)} active={emojiPickerOpen} />
+          {emojiPickerOpen && (
+            <div className="absolute top-full left-0 mt-1 z-20">
+              <EmojiPicker
+                onSelect={(emoji) => { e.chain().focus().insertContent(emoji).run(); }}
+                onClose={() => setEmojiPickerOpen(false)}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Editor stats bar ── */}
@@ -741,6 +828,18 @@ export default function SparkEditor({
         <ToolbarBtn icon={Heading1}      label="Heading 1"     onClick={() => e.chain().focus().toggleHeading({ level: 1 }).run()} active={e.isActive('heading', { level: 1 })} />
         <ToolbarBtn icon={Heading2}      label="Heading 2"     onClick={() => e.chain().focus().toggleHeading({ level: 2 }).run()} active={e.isActive('heading', { level: 2 })} />
         <ToolbarBtn icon={Quote}         label="Blockquote"    onClick={() => e.chain().focus().toggleBlockquote().run()}    active={e.isActive('blockquote')} />
+        <div className="w-px h-4 bg-venus-gray-200 mx-0.5" />
+        <div className="relative">
+          <ToolbarBtn icon={Smile} label="Insert emoji" onClick={() => setEmojiPickerOpen(v => !v)} active={emojiPickerOpen} />
+          {emojiPickerOpen && (
+            <div className="absolute top-full left-0 mt-1 z-20">
+              <EmojiPicker
+                onSelect={(emoji) => { e.chain().focus().insertContent(emoji).run(); }}
+                onClose={() => setEmojiPickerOpen(false)}
+              />
+            </div>
+          )}
+        </div>
         {onAskAI && (
           <>
             <div className="w-px h-4 bg-venus-gray-200 mx-0.5" />

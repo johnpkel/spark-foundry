@@ -91,6 +91,55 @@ function parseMessageParts(content: string): MessagePart[] {
   return parts.length ? parts : [{ type: 'text', content }];
 }
 
+// ─── Next Steps extractor ─────────────────────────────
+//
+// Detects a trailing "Next steps" section (## or **bold** heading followed
+// by a bullet list) and splits it off so the items can render as chips.
+
+function extractNextSteps(content: string): { body: string; steps: string[] } {
+  // Match "## Next steps", "**Next steps**", or "**Next steps:**" heading
+  // followed by bullet items, at the end of the message
+  const pattern = /\n+(?:#{1,3}\s+Next\s+steps|(?:\*\*|__)Next\s+steps:?(?:\*\*|__))[ \t]*\n((?:[ \t]*[-*][ \t]+.+\n?)+)$/i;
+  const match = content.match(pattern);
+  if (!match) return { body: content, steps: [] };
+
+  const body = content.slice(0, match.index!).trimEnd();
+  const steps = match[1]
+    .split('\n')
+    .map(line => line.replace(/^[ \t]*[-*][ \t]+/, '').trim())
+    .filter(Boolean);
+
+  return { body, steps };
+}
+
+/**
+ * Convert a question-style next-step into a directive-style prompt.
+ * "Want me to narrow the goals to DACH only?" → "Narrow the goals to DACH only"
+ * "Should I add goal owners alongside each KPI?" → "Add goal owners alongside each KPI"
+ */
+function toDirective(step: string): string {
+  let s = step;
+  // Strip trailing question mark
+  s = s.replace(/\?+$/, '');
+  // "Want me to X" / "Want to X" → "X"
+  s = s.replace(/^(?:Do you )?want (?:me )?to\s+/i, '');
+  // "Would you like me to X" / "Would you like to X" → "X"
+  s = s.replace(/^Would you like (?:me )?to\s+/i, '');
+  // "Should I X" → "X"
+  s = s.replace(/^Should I\s+/i, '');
+  // "Shall I X" → "X"
+  s = s.replace(/^Shall I\s+/i, '');
+  // "Can I X" / "Could I X" → "X"
+  s = s.replace(/^(?:Can|Could) I\s+/i, '');
+  // "Do you want X" → "X"
+  s = s.replace(/^Do you want\s+/i, '');
+  // "Would you prefer X" → "X"
+  s = s.replace(/^Would you prefer\s+/i, '');
+  // Capitalize first letter
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s;
+}
+
 // ─── Sub-components ───────────────────────────────────
 
 function MessageContent({ content }: { content: string }) {
@@ -502,11 +551,10 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
   }, [itemCount, sparkId]);
 
   // ── Submit ─────────────────────────────────────────
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isStreaming) return;
+  const sendMessage = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || isStreaming) return;
 
-    const userMessage = input.trim();
+    const userMessage = messageText.trim();
     setInput('');
     setMentionedRefs([]);
     setMentionState({ active: false, query: '', triggerIndex: -1 });
@@ -532,13 +580,18 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
         body.mentioned_item_ids = mentionedRefs
           .filter(r => r.type !== 'group')
           .map(r => r.id);
-        // For groups, resolve their itemIds and include those too
+        // For groups, send structured group metadata so the API preserves boundaries
         const groupRefs = mentionedRefs.filter(r => r.type === 'group');
         if (groupRefs.length > 0) {
-          const groupItemIds = groupRefs.flatMap(ref => {
-            const group = groups.find(g => g.id === ref.id);
-            return group ? group.itemIds : [];
-          });
+          const mentionedGroups = groupRefs
+            .map(ref => {
+              const group = groups.find(g => g.id === ref.id);
+              return group ? { id: group.id, name: group.name, itemIds: group.itemIds } : null;
+            })
+            .filter((g): g is { id: string; name: string; itemIds: string[] } => g !== null);
+          body.mentioned_groups = mentionedGroups;
+          // Also include group item IDs in the flat list for RAG retrieval
+          const groupItemIds = mentionedGroups.flatMap(g => g.itemIds);
           const existing = (body.mentioned_item_ids as string[]) || [];
           body.mentioned_item_ids = [...new Set([...existing, ...groupItemIds])];
         }
@@ -731,6 +784,12 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
       setIsStreaming(false);
       setStatusMessage(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sparkId, activeSessionId, isStreaming, selectedText, getDocumentText, mentionedRefs, groups]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMessage(input);
   };
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
@@ -742,9 +801,10 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
       setMessages(
         (data.messages || [])
           .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-          .map((m: { role: string; content: string }) => ({
+          .map((m: { role: string; content: string; metadata?: { agentSteps?: AgentStep[] } }) => ({
             role: m.role as 'user' | 'assistant',
             content: m.content,
+            ...(m.metadata?.agentSteps?.length ? { agentSteps: m.metadata.agentSteps } : {}),
           }))
       );
     } catch { /* silently fail */ }
@@ -1150,22 +1210,40 @@ export default function ChatPanel({ sparkId, itemCount = 0, items = [], groups =
                         <div className="chat-content">
                           <MessageContent content={msg.content} />
                         </div>
-                      ) : (
-                        // After streaming completes, parse and render proposal blocks
-                        <div className="chat-content">
-                          {parseMessageParts(msg.content).map((part, pi) =>
-                            part.type === 'proposal' ? (
-                              <ProposalCard
-                                key={pi}
-                                proposal={part.content}
-                                onApply={handleApplyProposal}
-                              />
-                            ) : (
-                              <MessageContent key={pi} content={part.content} />
-                            )
-                          )}
-                        </div>
-                      )}
+                      ) : (() => {
+                        const { body, steps } = extractNextSteps(msg.content);
+                        return (
+                          <>
+                            <div className="chat-content">
+                              {parseMessageParts(body).map((part, pi) =>
+                                part.type === 'proposal' ? (
+                                  <ProposalCard
+                                    key={pi}
+                                    proposal={part.content}
+                                    onApply={handleApplyProposal}
+                                  />
+                                ) : (
+                                  <MessageContent key={pi} content={part.content} />
+                                )
+                              )}
+                            </div>
+                            {steps.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 px-4 pb-3 -mt-1">
+                                {steps.map((step, si) => (
+                                  <button
+                                    key={si}
+                                    onClick={() => sendMessage(toDirective(step))}
+                                    disabled={isStreaming}
+                                    className="text-[11px] px-2.5 py-1 rounded-full border border-venus-purple/25 text-venus-purple hover:bg-venus-purple-light/50 hover:border-venus-purple/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {step}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </>
                 ) : (

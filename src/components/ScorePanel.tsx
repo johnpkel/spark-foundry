@@ -583,6 +583,8 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
   const [errorMsg, setErrorMsg] = useState('');
   const [fullAnalysis, setFullAnalysis] = useState<FullAnalysisResult | null>(initialLyticsCache?.fullAnalysis ?? null);
 
+  const hasLyticsInAnalysis = (fullAnalysis?.lytics?.topics?.length ?? 0) > 0 || (fullAnalysis?.lytics?.audiences?.length ?? 0) > 0;
+
   // Lytics ambient data state — hydrate from persisted cache
   const [lyticsAvailable, setLyticsAvailable] = useState(
     !!(initialLyticsCache?.topics?.length || initialLyticsCache?.audiences?.length)
@@ -914,18 +916,19 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
             } else if (currentEvent === 'result') {
               const data = payload;
               if (data.lytics) {
-                if (data.lytics.topics) setLyticsTopics(data.lytics.topics);
-                if (data.lytics.audiences) setLyticsAudiences(data.lytics.audiences);
+                if (data.lytics.topics?.length > 0) setLyticsTopics(data.lytics.topics);
+                if (data.lytics.audiences?.length > 0) setLyticsAudiences(data.lytics.audiences);
+                if (data.lytics.opportunity?.length > 0) setLyticsOpportunity(data.lytics.opportunity);
               }
               if (data.ai?.qualityAnalysis) setAiResult(data.ai.qualityAnalysis);
               setFullAnalysis(data);
               setErrorMsg('');
               setLastFetchedAt(Date.now());
               persistLyticsCache({
-                topics: data.lytics?.topics ?? lyticsTopics,
+                topics: data.lytics?.topics?.length ? data.lytics.topics : lyticsTopics,
                 inferredTopics: lyticsInferredTopics,
-                audiences: data.lytics?.audiences ?? lyticsAudiences,
-                opportunity: lyticsOpportunity,
+                audiences: data.lytics?.audiences?.length ? data.lytics.audiences : lyticsAudiences,
+                opportunity: data.lytics?.opportunity?.length ? data.lytics.opportunity : lyticsOpportunity,
                 aid: lyticsAid,
                 fullAnalysis: data,
                 aiResult: data.ai?.qualityAnalysis ?? null,
@@ -1452,8 +1455,10 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
       {fullAnalysis?.ai?.contentComparison && (
         <Section
           icon={Compass}
-          title="Lytics Gap Analysis"
-          tooltip="AI comparison of your content against real Lytics audience data. Identifies what your content covers well, what\u2019s missing, and which audience interests aren\u2019t addressed."
+          title={hasLyticsInAnalysis ? 'Lytics Gap Analysis' : 'Content Gap Analysis'}
+          tooltip={hasLyticsInAnalysis
+            ? "AI comparison of your content against real Lytics audience data. Identifies what your content covers well, what's missing, and which audience interests aren't addressed."
+            : "AI analysis of content gaps, missing perspectives, and strategic improvement opportunities. Connect Lytics for audience-driven insights."}
         >
           {showRawData ? (
             <RawDataBlock
@@ -1462,8 +1467,10 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
                 _tool: 'submit_strategic_analysis',
                 _field: 'contentComparison',
                 _model: 'claude-sonnet-4-6',
-                _description: 'Claude compares editor content against real Lytics audience intelligence data (topics, segments, behavioral scores, aggregate affinities). Only available when Lytics data is present — Claude receives the full Lytics context in its system prompt.',
-                _context_provided: 'Lytics topics with confidence, aligned audiences with sizes, topic behavioral data (recency/intensity/propensity/opportunity), aggregate audience affinities',
+                _description: hasLyticsInAnalysis
+                  ? 'Claude compares editor content against real Lytics audience intelligence data (topics, segments, behavioral scores, aggregate affinities).'
+                  : 'Claude analyzes content gaps, missing perspectives, and strategic opportunities based on the content itself (no Lytics data available).',
+                ...(hasLyticsInAnalysis ? { _context_provided: 'Lytics topics with confidence, aligned audiences with sizes, topic behavioral data (recency/intensity/propensity/opportunity), aggregate audience affinities' } : {}),
                 result: fullAnalysis.ai.contentComparison,
               } as unknown as Record<string, unknown>}
               formula="anthropic.messages.create({ system: lyticsContext, tools: [submit_strategic_analysis] }) → .input.contentComparison"
@@ -1486,7 +1493,9 @@ const ScorePanel = forwardRef<ScorePanelHandle, ScorePanelProps>(function ScoreP
         <Section
           icon={Lightbulb}
           title="Strategic Recommendations"
-          tooltip="AI-generated recommendations grounded in Lytics behavioral data. Content updates improve audience alignment. Campaign ideas leverage engagement patterns. Underserved audiences and content gaps are data-driven opportunities."
+          tooltip={hasLyticsInAnalysis
+            ? "AI-generated recommendations grounded in Lytics behavioral data. Content updates improve audience alignment. Campaign ideas leverage engagement patterns. Underserved audiences and content gaps are data-driven opportunities."
+            : "AI-generated strategic recommendations based on content analysis. Content updates, campaign ideas, potential audiences, and content gaps. Connect Lytics for audience-driven insights."}
         >
           {showRawData ? (
             <RawDataBlock

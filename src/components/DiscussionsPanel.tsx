@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useCallback, Fragment } from 'react';
+import { useState, useCallback, useRef, Fragment } from 'react';
 import { MessageSquareText, Check, ChevronDown, ChevronRight, Reply, MessageCircle } from 'lucide-react';
 import { useEditorContext } from '@/lib/editor-context';
 import type { CommentThread, ThreadComment } from '@/lib/types';
+import { useEmojiInput } from '@/hooks/useEmojiInput';
+import type { EmojiEntry } from '@/lib/emoji-data';
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -66,6 +68,8 @@ function ThreadCard({
 }) {
   const [showReplyInput, setShowReplyInput] = useState(false);
   const [replyText, setReplyText] = useState('');
+  const replyInputRef = useRef<HTMLInputElement>(null);
+  const emoji = useEmojiInput();
 
   const handleReplySubmit = () => {
     if (!replyText.trim()) return;
@@ -125,18 +129,58 @@ function ThreadCard({
 
       {/* Reply input */}
       {showReplyInput && (
-        <div className="mt-2" onClick={(ev) => ev.stopPropagation()}>
+        <div className="mt-2 relative" onClick={(ev) => ev.stopPropagation()}>
           <input
+            ref={replyInputRef}
             autoFocus
             value={replyText}
-            onChange={(ev) => setReplyText(ev.target.value)}
-            onKeyDown={(ev) => {
-              if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); handleReplySubmit(); }
-              if (ev.key === 'Escape') { setShowReplyInput(false); setReplyText(''); }
+            onChange={(ev) => {
+              const value = ev.target.value;
+              const cursorPos = ev.target.selectionStart ?? value.length;
+              const converted = emoji.onChange(value, cursorPos);
+              setReplyText(converted !== value ? converted : value);
             }}
-            placeholder="Reply…"
+            onKeyDown={(ev) => {
+              const input = replyInputRef.current;
+              if (input && emoji.active) {
+                const handled = emoji.onKeyDown(ev, replyText, input.selectionStart ?? replyText.length, (newText, newCursor) => {
+                  setReplyText(newText);
+                  setTimeout(() => { input.setSelectionRange(newCursor, newCursor); input.focus(); }, 0);
+                });
+                if (handled) return;
+              }
+              if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); handleReplySubmit(); emoji.reset(); }
+              if (ev.key === 'Escape') { emoji.reset(); setShowReplyInput(false); setReplyText(''); }
+            }}
+            placeholder="Reply… (: for emoji)"
             className="w-full text-sm bg-venus-gray-50 border border-venus-gray-200 rounded px-2.5 py-1.5 outline-none focus:border-venus-purple"
           />
+          {/* Emoji dropdown */}
+          {emoji.active && (
+            <div className="absolute bottom-0 left-0 right-0 translate-y-full z-10 bg-card-bg border border-venus-gray-200 rounded-md shadow-md py-1 max-h-36 overflow-y-auto">
+              {emoji.results.map((item: EmojiEntry, i: number) => (
+                <button
+                  key={item.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    const input = replyInputRef.current;
+                    if (!input) return;
+                    const { text: newText, cursor } = emoji.insertEmoji(replyText, input.selectionStart ?? replyText.length, item.emoji);
+                    setReplyText(newText);
+                    setTimeout(() => { input.setSelectionRange(cursor, cursor); input.focus(); }, 0);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors flex items-center gap-2.5 ${
+                    i === emoji.selectedIndex
+                      ? 'bg-venus-purple-light text-venus-purple'
+                      : 'text-venus-gray-700 hover:bg-venus-gray-100'
+                  }`}
+                >
+                  <span className="text-base leading-none">{item.emoji}</span>
+                  <span className="truncate">{item.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

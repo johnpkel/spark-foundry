@@ -24,9 +24,16 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 - Lead with your assessment. State your position, then support it with evidence from the Spark.
 - Be honest about weak ideas. If a campaign concept, content angle, or strategy has problems, say so directly and explain why. Do not soften bad news.
 - Keep it concise. Short paragraphs, no filler, no preamble. Get to the point.
+- When a user's message contains multiple options or alternatives (e.g. "X or Y", "either A or B"), ask the user which one they'd like before proceeding. If the user explicitly confirms they want all options (e.g. "do all of them", "try everything", "both"), proceed with all of them.
 - Use the semantic_search tool to find relevant items before answering. Reference specific items by name.
 - When image items appear in context, you can see them and should describe or reason about their visual content. Image descriptions, OCR text, and detected objects from image analysis are included in the context when available.
 - Format in Markdown. No emojis.
+
+## Groups
+Users organize Spark items into named groups. When groups are @-mentioned:
+- Treat each group as a distinct, cohesive unit. The items in a group represent a curated collection with a shared purpose.
+- When asked to compare groups, analyze each group's aggregate data separately, then compare across groups. Do not mix items across group boundaries.
+- Reference the group name when discussing its items (e.g. "In the DACH Campaign group...").
 
 ## Generating artifacts
 - Contentstack CMS entries: title, body, SEO metadata, and relevant fields.
@@ -47,7 +54,9 @@ const SYSTEM_PROMPT = `You are the Spark analyst — a sharp, direct strategic a
 Aim for 100-200 words. Only exceed this for full artifacts (campaign briefs, CMS entries). No bullet lists longer than 5 items. No introductory sentences — start with the substance.
 
 ## Ending every response
-End with **Next steps** — 2-3 specific follow-up questions the user could ask next. Keep them short.
+End with **Next steps** — 2-3 specific follow-up questions the user could ask next. These become clickable chips in the UI, so:
+- Each item must be about ONE action. Never combine alternatives with "or" in a single item — split them into separate items instead.
+- Keep them short.
 
 ## Creating Skills
 When a user asks to "save this as a skill", "turn this into a skill", or wants to save a workflow for reuse, use the draft_skill tool. Distill the conversation into clean, reusable instructions with clear trigger phrases in the description. Extract context-dependent values as {{variables}} with sensible defaults.${CMS_SYSTEM_PROMPT}`;
@@ -318,6 +327,8 @@ export async function POST(request: NextRequest) {
     scoped_item_ids,
     // @ mentioned items — these supplement RAG with extra weight
     mentioned_item_ids,
+    // @ mentioned groups — preserves group boundaries for structured context
+    mentioned_groups,
   } = await request.json();
 
   if (!spark_id || !message) {
@@ -499,19 +510,50 @@ export async function POST(request: NextRequest) {
             const newItems = mItems.filter(i => !existingIds.has(i.id));
 
             if (newItems.length > 0) {
-              const mentionTexts = newItems
-                .map((item, i) => {
-                  const meta = item.metadata as Record<string, unknown> | null;
-                  const parts: string[] = [`${i + 1}. [${item.type}] ${item.title}`];
-                  if (item.content) parts.push((item.content as string).substring(0, 2000));
-                  if (item.summary) parts.push(`Summary: ${item.summary}`);
-                  if (meta?.url) parts.push(`URL: ${meta.url}`);
-                  parts.push(...formatImageAnalysis(meta));
-                  return parts.join('\n');
-                })
-                .join('\n\n');
+              const formatItem = (item: typeof newItems[number], idx: number) => {
+                const meta = item.metadata as Record<string, unknown> | null;
+                const parts: string[] = [`${idx + 1}. [${item.type}] ${item.title}`];
+                if (item.content) parts.push((item.content as string).substring(0, 2000));
+                if (item.summary) parts.push(`Summary: ${item.summary}`);
+                if (meta?.url) parts.push(`URL: ${meta.url}`);
+                parts.push(...formatImageAnalysis(meta));
+                return parts.join('\n');
+              };
 
-              ragContext.text += `\n\n## Mentioned Items (explicitly referenced by the user with @)\nThe user specifically mentioned these items in their message. Give them extra attention and be sure to reference them in your response.\n\n${mentionTexts}`;
+              const typedGroups = Array.isArray(mentioned_groups)
+                ? (mentioned_groups as { id: string; name: string; itemIds: string[] }[])
+                : [];
+              const hasGroups = typedGroups.length > 0;
+
+              if (hasGroups) {
+                // Build group-aware context that preserves boundaries
+                const groupItemIdSets = typedGroups.map(g => new Set(g.itemIds));
+                const allGroupItemIds = new Set(typedGroups.flatMap(g => g.itemIds));
+
+                // Items not belonging to any group
+                const ungroupedItems = newItems.filter(i => !allGroupItemIds.has(i.id));
+
+                let mentionText = '';
+
+                for (const [gi, group] of typedGroups.entries()) {
+                  const groupItems = newItems.filter(i => groupItemIdSets[gi].has(i.id));
+                  if (groupItems.length === 0) continue;
+                  mentionText += `\n### Group: "${group.name}" (${groupItems.length} items)\nThe following items belong to the "${group.name}" group. Treat them as a cohesive unit.\n\n`;
+                  mentionText += groupItems.map((item, i) => formatItem(item, i)).join('\n\n');
+                  mentionText += '\n';
+                }
+
+                if (ungroupedItems.length > 0) {
+                  mentionText += `\n### Individually Mentioned Items\n\n`;
+                  mentionText += ungroupedItems.map((item, i) => formatItem(item, i)).join('\n\n');
+                }
+
+                ragContext.text += `\n\n## Mentioned Items & Groups (explicitly referenced by the user with @)\nThe user mentioned specific groups and/or items. Each group is a curated collection — respect group boundaries when comparing or analyzing. If the user asks about differences between groups, compare the aggregate data of each group separately.\n${mentionText}`;
+              } else {
+                // No groups — flat list as before
+                const mentionTexts = newItems.map((item, i) => formatItem(item, i)).join('\n\n');
+                ragContext.text += `\n\n## Mentioned Items (explicitly referenced by the user with @)\nThe user specifically mentioned these items in their message. Give them extra attention and be sure to reference them in your response.\n\n${mentionTexts}`;
+              }
 
               // Add mentioned items to the context items list
               for (const item of newItems) {
@@ -532,7 +574,7 @@ export async function POST(request: NextRequest) {
               service: 'supabase',
               direction: 'event',
               level: 'info',
-              summary: `@ Mentions: ${mItems.length} item${mItems.length !== 1 ? 's' : ''} injected into context`,
+              summary: `@ Mentions: ${mItems.length} item${mItems.length !== 1 ? 's' : ''} in ${Array.isArray(mentioned_groups) ? mentioned_groups.length : 0} group(s) injected into context`,
             });
           }
         }
@@ -610,6 +652,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
         ];
 
         let fullResponse = '';
+        const agentSteps: { type: string; content: string; tool?: string; summary?: string; success?: boolean; turn?: number }[] = [];
         const cumulativeTokens = { input: 0, output: 0 };
 
         // ── ReAct streaming loop ────────────────────────────────
@@ -635,11 +678,18 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
           });
 
           // Route streaming text through ThoughtStreamParser when agentic
+          let currentThought = '';
           const parser = new ThoughtStreamParser();
           parser.onThought = (text) => {
+            currentThought += text;
             send({ type: 'thought', content: text, turn });
           };
           parser.onText = (text) => {
+            // Finalize accumulated thought before switching to text
+            if (currentThought) {
+              agentSteps.push({ type: 'thought', content: currentThought, turn });
+              currentThought = '';
+            }
             fullResponse += text;
             send({ type: 'text', content: text });
           };
@@ -654,7 +704,13 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
           });
 
           const response = await stream.finalMessage();
-          if (isAgentic) parser.flush();
+          if (isAgentic) {
+            parser.flush();
+            if (currentThought) {
+              agentSteps.push({ type: 'thought', content: currentThought, turn });
+              currentThought = '';
+            }
+          }
 
           // Track token usage
           cumulativeTokens.input += response.usage.input_tokens;
@@ -704,15 +760,17 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
             const toolName = toolUse.name;
             const toolInput = toolUse.input as Record<string, unknown>;
 
+            const actionSummary = summarizeToolInput(toolName, toolInput);
             send({
               type: 'action',
               tool: toolName,
-              input: summarizeToolInput(toolName, toolInput),
+              input: actionSummary,
               skill_name: toolName === 'use_skill'
                 ? activeSkills?.find((s: { id: string; name: string }) => s.id === toolInput.skill_id)?.name
                 : undefined,
               turn,
             });
+            agentSteps.push({ type: 'action', content: actionSummary, tool: toolName, turn });
             send({ type: 'status', content: TOOL_LABELS[toolName] || 'Processing...' });
 
             addLogEntry({
@@ -750,6 +808,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
                   success: false,
                   turn,
                 });
+                agentSteps.push({ type: 'observation', content: 'User declined this operation.', tool: toolName, summary: 'User declined this operation.', success: false, turn });
                 continue;
               }
             }
@@ -769,6 +828,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
                 content: JSON.stringify({ success: true, message: 'Skill draft sent to Skills panel for review. The user can edit and save it.' }),
               });
               send({ type: 'observation', tool: toolName, summary: 'Skill draft sent to panel', success: true, turn });
+              agentSteps.push({ type: 'observation', content: 'Skill draft sent to panel', tool: toolName, summary: 'Skill draft sent to panel', success: true, turn });
               continue;
             }
 
@@ -787,11 +847,13 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
                 content: JSON.stringify({ success: true, message: `Document updated (${toolInput.mode})` }),
               });
               send({ type: 'observation', tool: toolName, summary: `Applied to editor (${toolInput.mode})`, success: true, turn });
+              agentSteps.push({ type: 'observation', content: `Applied to editor (${toolInput.mode})`, tool: toolName, summary: `Applied to editor (${toolInput.mode})`, success: true, turn });
               continue;
             }
 
             try {
               const result = await executeTool(toolName, toolInput);
+              const obsSummary = summarizeToolResult(toolName, result);
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: toolUse.id,
@@ -800,10 +862,11 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
               send({
                 type: 'observation',
                 tool: toolName,
-                summary: summarizeToolResult(toolName, result),
+                summary: obsSummary,
                 success: true,
                 turn,
               });
+              agentSteps.push({ type: 'observation', content: obsSummary, tool: toolName, summary: obsSummary, success: true, turn });
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               toolResults.push({
@@ -819,6 +882,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
                 success: false,
                 turn,
               });
+              agentSteps.push({ type: 'observation', content: `Error: ${errorMsg}`, tool: toolName, summary: `Error: ${errorMsg}`, success: false, turn });
             }
           }
 
@@ -852,6 +916,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
               session_id: sessionId,
               role: 'assistant',
               content: fullResponse,
+              metadata: agentSteps.length > 0 ? { agentSteps } : {},
             })
             .select('id')
             .single();
