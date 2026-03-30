@@ -782,7 +782,7 @@ Content format: Well-formatted Markdown. Preserve formatting from the existing d
             });
 
             // Approval gate for write/destructive tools
-            if (isWriteTool(toolName)) {
+            if (isWriteTool(toolName, toolInput)) {
               const approvalId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               send({
                 type: 'approval_request',

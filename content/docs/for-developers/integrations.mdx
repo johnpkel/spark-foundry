@@ -12,14 +12,19 @@ Spark Foundry connects to multiple external services to pull data into Spark wor
 ```typescript
 // src/lib/integrations.ts
 export const INTEGRATIONS: IntegrationConfig[] = [
-  { key: 'contentstack', label: 'Contentstack', checkType: 'server', ... },
-  { key: 'google_drive', label: 'Google Drive', checkType: 'server', ... },
+  { key: 'contentstack', label: 'Contentstack', checkType: 'server', connectUrl: '/api/auth/contentstack?popup=true', popupEventType: 'contentstack-auth', disconnectEndpoint: '/api/auth/contentstack/disconnect' },
+  { key: 'google_drive', label: 'Google Drive', checkType: 'server', connectUrl: '/api/auth/google', popupEventType: 'google-auth', disconnectEndpoint: '/api/auth/google/disconnect' },
   { key: 'slack', label: 'Slack', checkType: 'server' },
+  { key: 'lytics', label: 'Lytics', checkType: 'server', tokenAuth: true, tokenEndpoint: '/api/auth/lytics', tokenPlaceholder: 'at.xxxxxxxx.xxxxxxxx', disconnectEndpoint: '/api/auth/lytics' },
   { key: 'web_search', label: 'Web Search', checkType: 'static' },
 ];
 ```
 
-Each integration can be server-checked (has OAuth tokens) or static (always available). The `IntegrationsStatus` component renders connection status and OAuth connect buttons.
+Each integration can be:
+- **Server-checked with OAuth:** Contentstack, Google Drive — popup-based OAuth flow
+- **Server-checked with token:** Lytics — user enters API token in the Integrations tab, stored as AES-GCM encrypted `httpOnly` cookie
+- **Server-checked static:** Slack — bot token configured at deployment
+- **Static:** Web Search — always available, no auth needed
 
 ### Contentstack
 
@@ -96,9 +101,17 @@ The scraper (`src/lib/scraper.ts`) extracts:
 
 ### Lytics (Audience Intelligence)
 
+**Auth** (`src/app/api/auth/lytics/route.ts`):
+- User enters API token via the Integrations tab (token input, not OAuth)
+- Token validated against `GET /v2/segment?limit=1` on Lytics API
+- Stored as AES-GCM encrypted `httpOnly` cookie (`lytics_token`, 1-year expiry)
+- Falls back to `LYTICS_ACCESS_TOKEN` env var if no cookie set
+- Explicit disconnect sets a `lytics_disabled` cookie to prevent env var fallback
+- `getLyticsToken()` helper reads the token (cookie-first, env-fallback)
+
 **API Client** (`src/lib/lytics/api.ts`):
 - All calls instrumented with `traceFetch()` for the activity log
-- Auth via `Authorization: {LYTICS_ACCESS_TOKEN}` header
+- Auth via `Authorization: {token}` header (from `getLyticsToken()`)
 - Key endpoints: `/v2/content/enrich`, `/v2/content/align`, `/v2/content/opportunity`, `/v2/segment`
 
 **Data Service** (`src/lib/lytics/data-service.ts`):
@@ -106,10 +119,18 @@ The scraper (`src/lib/scraper.ts`) extracts:
 - Caches segments, segment groups, opportunity data, and per-editor enrichment results
 - Refreshes on Spark load, editor changes (2s debounce), and full analysis runs
 
+**Agent Tools:**
+- `lytics_insights` — query cached data (segments, opportunity, content_alignment, profile_affinities)
+- `lytics_api` — general-purpose REST API proxy for any Lytics endpoint. Auth handled automatically via `getLyticsToken()`. Supports GET/POST/PUT/DELETE with JSON or plain-text bodies. Responses truncated to 20KB for context safety.
+
 **Content Scoring** (`src/components/ScorePanel.tsx`):
 - Layer 1: Always-on — renders from cache on every editor change (topics, audience fit, opportunity)
 - Layer 2: Full analysis — refreshes Lytics + samples profile affinities + calls Claude with two tools
-- Layer 3: Chat — `lytics_insights` tool gives the agent access to all cached Lytics data
+- Layer 3: Chat — `lytics_insights` + `lytics_api` tools, plus 22 skills (content-scoring-analytics + 21 Lytics CDP skills)
+
+**Skills:**
+- `content-scoring-analytics` — teaches the agent what every scoring metric means (formulas, quality tiers, interpretation)
+- 21 Lytics CDP skills — audience building, profile investigation, schema management, integration setup, campaign flows, export debugging, data health monitoring, etc.
 
 See the [Content Scoring & Lytics Integration](/docs/for-developers/content-scoring) page for full architecture details.
 

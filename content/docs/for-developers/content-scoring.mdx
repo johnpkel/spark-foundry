@@ -161,7 +161,11 @@ Triggered by "Run full analysis" button. The `/api/lytics/analyze` route:
 
 ## Chat Integration
 
-The `lytics_insights` tool in `src/lib/agent/tools-registry.ts` gives the chat agent access to cached Lytics data:
+The chat agent accesses scoring and Lytics data through multiple tools and skills:
+
+### Tools
+
+**`lytics_insights`** — Query cached Lytics data (fast, no API calls for cached data):
 
 | Query Type | What It Returns |
 |---|---|
@@ -169,6 +173,22 @@ The `lytics_insights` tool in `src/lib/agent/tools-registry.ts` gives the chat a
 | `opportunity` | Topic landscape with behavioral scores, filterable by topic |
 | `content_alignment` | Classify provided text and return matching audiences |
 | `profile_affinities` | Cached content topics and audience alignment |
+
+**`lytics_api`** — General-purpose Lytics REST API proxy for any endpoint not covered by `lytics_insights`. Supports all HTTP methods, JSON and plain-text bodies. Auth handled automatically via the user's token from the Integrations tab. Write operations (POST/PUT/DELETE) go through the approval gate. Responses truncated to 20KB.
+
+### Skills
+
+**`content-scoring-analytics`** — A comprehensive skill that gives the agent full interpretive context for every scoring metric, matching what the user sees in the ScorePanel:
+- Opportunity score formula and interpretation
+- Behavioral dimensions (recency, intensity, propensity, deeply engaged, at risk)
+- Topic confidence from Lytics NLP
+- Audience alignment (cosine similarity)
+- AI quality scores (readability, clarity, engagement, SEO)
+- Channel fit definitions (Blog, Email, Social, Web Page, Newsletter)
+- The full 7-step analysis pipeline
+- Color scale and quality tier interpretations
+
+**21 Lytics CDP skills** — Provide structured workflows for complex Lytics operations (audience building, profile investigation, schema management, integration setup, campaign flows, export debugging, data health monitoring). These all use the `lytics_api` tool and are routed via the `lytics-agent` router skill.
 
 ## Persistence
 
@@ -188,8 +208,11 @@ Stored in `sparks.metadata.primaryDomains`. Configurable via globe icon in heade
 | `src/lib/lytics/types.ts` | TypeScript types for all Lytics data models |
 | `src/lib/lytics/api.ts` | Lytics v2 API client (traceFetch instrumented) |
 | `src/lib/lytics/data-service.ts` | Singleton cache + refresh orchestration |
+| `src/app/api/auth/lytics/route.ts` | Token auth: validate, encrypt, store cookie, `getLyticsToken()` helper |
 | `src/app/api/lytics/data/route.ts` | GET cached state |
 | `src/app/api/lytics/enrich/route.ts` | POST editor enrichment |
 | `src/app/api/lytics/analyze/route.ts` | POST full analysis (SSE) |
+| `src/lib/agent/tools-registry.ts` | `lytics_insights` + `lytics_api` tool definitions and execution |
+| `src/lib/agent/starter-skills.ts` | `content-scoring-analytics` skill definition |
 | `src/components/ScorePanel.tsx` | Three-layer scoring UI |
 | `src/components/PrimaryDomains.tsx` | Domain config popover |

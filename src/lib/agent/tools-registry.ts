@@ -52,6 +52,7 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   cs_publish_entry: 'write',
   // Lytics tools
   lytics_insights: 'read',
+  lytics_api: 'read', // risk is elevated dynamically for write methods below
   // Skill tools
   use_skill: 'read',
   get_skill_resource: 'read',
@@ -60,12 +61,18 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   update_editor: 'read',
 };
 
-export function getToolRisk(name: string): ToolRisk {
+export function getToolRisk(name: string, input?: Record<string, unknown>): ToolRisk {
+  // lytics_api risk depends on the HTTP method
+  if (name === 'lytics_api' && input) {
+    const method = (input.method as string)?.toUpperCase();
+    if (method === 'DELETE') return 'destructive';
+    if (method === 'POST' || method === 'PUT') return 'write';
+  }
   return TOOL_RISK[name] || 'read';
 }
 
-export function isWriteTool(name: string): boolean {
-  const risk = getToolRisk(name);
+export function isWriteTool(name: string, input?: Record<string, unknown>): boolean {
+  const risk = getToolRisk(name, input);
   return risk === 'write' || risk === 'destructive';
 }
 
@@ -92,6 +99,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cs_delete_entry: 'Deleting CMS entry...',
   cs_publish_entry: 'Publishing CMS entry...',
   lytics_insights: 'Querying Lytics data...',
+  lytics_api: 'Calling Lytics API...',
   use_skill: 'Loading skill instructions...',
   get_skill_resource: 'Loading skill resource...',
   draft_skill: 'Drafting skill...',
@@ -394,6 +402,37 @@ const LYTICS_TOOLS: Anthropic.Tool[] = [
       required: ['query_type'],
     },
   },
+  {
+    name: 'lytics_api',
+    description: 'Call any Lytics REST API endpoint. Use this for operations not covered by lytics_insights: profile lookups, segment CRUD, schema browsing, job management, stream inspection, flow management, and more. Auth is handled automatically via the user\'s Lytics token from the Integrations tab.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        method: {
+          type: 'string',
+          enum: ['GET', 'POST', 'PUT', 'DELETE'],
+          description: 'HTTP method',
+        },
+        path: {
+          type: 'string',
+          description: 'API path (e.g., "/v2/segment", "/api/entity/user/email/user@example.com", "/v2/schema/user/field"). Do NOT include the base URL.',
+        },
+        body: {
+          type: 'object',
+          description: 'Request body for POST/PUT (sent as JSON). For FilterQL endpoints that expect plain text, use the "body_text" field instead.',
+        },
+        body_text: {
+          type: 'string',
+          description: 'Raw text body for endpoints that expect plain text (e.g., FilterQL validation/sizing). Mutually exclusive with "body".',
+        },
+        query_params: {
+          type: 'object',
+          description: 'Query parameters to append to the URL (e.g., {"sizes": "true", "limit": "50"})',
+        },
+      },
+      required: ['method', 'path'],
+    },
+  },
 ];
 
 const SKILL_TOOLS: Anthropic.Tool[] = [
@@ -567,6 +606,8 @@ export function summarizeToolInput(name: string, input: Record<string, unknown>)
       return `Publishing to ${(input.environments as string[])?.join(', ')}`;
     case 'lytics_insights':
       return `${input.query_type}${input.text ? ': ' + (input.text as string).substring(0, 40) + '...' : ''}`;
+    case 'lytics_api':
+      return `${input.method} ${input.path}`;
     case 'use_skill':
       return `skill: ${input.skill_id}`;
     case 'get_skill_resource':
@@ -593,6 +634,14 @@ export function describeWriteOperation(name: string, input: Record<string, unkno
     case 'update_editor': {
       const modeLabels: Record<string, string> = { append: 'Append to document', integrate: 'Rewrite document', insert_after: 'Insert after heading' };
       return `${modeLabels[input.mode as string] || 'Update document'}: ${input.description || ''}`;
+    }
+    case 'lytics_api': {
+      const m = (input.method as string)?.toUpperCase();
+      const p = input.path as string;
+      if (m === 'DELETE') return `Delete Lytics resource at ${p}. This cannot be undone.`;
+      if (m === 'POST') return `Create Lytics resource via POST ${p}`;
+      if (m === 'PUT') return `Update Lytics resource via PUT ${p}`;
+      return `Call Lytics API: ${m} ${p}`;
     }
     default:
       return `Execute ${name}`;
@@ -990,6 +1039,114 @@ export async function executeTool(
 
         default:
           return JSON.stringify({ error: `Unknown query_type: ${queryType}` });
+      }
+    }
+
+    // ── Lytics general API proxy ───
+    case 'lytics_api': {
+      if (!(await isAvailable())) {
+        return JSON.stringify({ error: 'Lytics is not configured. Ask the user to add their Lytics API token in the Integrations tab.' });
+      }
+
+      const method = (input.method as string)?.toUpperCase() || 'GET';
+      const path = input.path as string;
+      const queryParams = input.query_params as Record<string, string> | undefined;
+      const bodyJson = input.body as Record<string, unknown> | undefined;
+      const bodyText = input.body_text as string | undefined;
+
+      if (!path) {
+        return JSON.stringify({ error: 'path is required' });
+      }
+
+      // Build URL
+      const base = 'https://api.lytics.io';
+      const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
+      if (queryParams) {
+        for (const [k, v] of Object.entries(queryParams)) {
+          url.searchParams.set(k, v);
+        }
+      }
+
+      // Get auth token
+      let token: string;
+      try {
+        const { getLyticsToken } = await import('@/app/api/auth/lytics/route');
+        const t = await getLyticsToken();
+        if (!t) throw new Error('No token');
+        token = t;
+      } catch {
+        const envToken = process.env.LYTICS_ACCESS_TOKEN;
+        if (!envToken) return JSON.stringify({ error: 'Lytics token not available' });
+        token = envToken;
+      }
+
+      // Build headers and body
+      const headers: Record<string, string> = { Authorization: token };
+      let fetchBody: string | undefined;
+
+      if (bodyText !== undefined) {
+        headers['Content-Type'] = 'text/plain';
+        fetchBody = bodyText;
+      } else if (bodyJson !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        fetchBody = JSON.stringify(bodyJson);
+      }
+
+      const start = Date.now();
+      addLogEntry({
+        service: 'lytics',
+        direction: 'request',
+        level: 'info',
+        method,
+        url: url.toString(),
+        summary: `lytics_api: ${method} ${path}`,
+      });
+
+      try {
+        const res = await fetch(url.toString(), {
+          method,
+          headers,
+          ...(fetchBody ? { body: fetchBody } : {}),
+        });
+
+        const text = await res.text();
+        const duration = Date.now() - start;
+
+        addLogEntry({
+          service: 'lytics',
+          direction: 'response',
+          level: res.ok ? 'info' : 'error',
+          summary: `lytics_api: ${method} ${path} → ${res.status} (${duration}ms)`,
+          duration,
+          responseBody: { status: res.status, length: text.length },
+        });
+
+        if (!res.ok) {
+          return JSON.stringify({ error: `Lytics API returned ${res.status}`, message: text.slice(0, 500) });
+        }
+
+        // Truncate very large responses to avoid blowing up context
+        if (text.length > 20000) {
+          try {
+            const parsed = JSON.parse(text);
+            const data = parsed.data;
+            if (Array.isArray(data) && data.length > 50) {
+              return JSON.stringify({ ...parsed, data: data.slice(0, 50), _truncated: true, _total: data.length }, null, 2);
+            }
+          } catch { /* not JSON, truncate raw */ }
+          return text.slice(0, 20000) + '\n\n... (truncated, ' + text.length + ' total chars)';
+        }
+
+        return text;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addLogEntry({
+          service: 'lytics',
+          direction: 'response',
+          level: 'error',
+          summary: `lytics_api: ${method} ${path} — ${msg}`,
+        });
+        return JSON.stringify({ error: msg });
       }
     }
 

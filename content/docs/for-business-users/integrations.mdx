@@ -77,15 +77,28 @@ Spark Foundry becomes more powerful when connected to the tools your team alread
 
 ### Lytics
 
-**What it does:** Connects your Spark editor to real audience behavioral data from your Lytics CDP.
+**What it does:** Connects your Spark to real audience behavioral data from your Lytics CDP. Powers the Scoring panel and gives the AI deep Lytics capabilities.
 
-**No manual connection required.** Lytics is configured at the platform level with an API token. Once active, it powers the Scoring panel automatically.
+**How to connect:**
+1. Click the integrations panel (plug icon) in the Spark header
+2. Find **Lytics** and enter your API token (format: `at.xxxxxxxx.xxxxxxxx`)
+3. Click **Connect** — the token is validated and securely stored
+
+Your token is encrypted and stored in a secure cookie. You can disconnect at any time.
 
 **What you get in the Scoring panel:**
 - **Lytics Topics** — Automatically classifies your content into behavioral topics as you write
 - **Audience Fit** — Shows which audience segments your content aligns with and by how much
 - **Content Opportunity** — Surfaces topics your audiences care about that have limited existing content
 - **Full Analysis** — On demand, runs a deeper AI-powered assessment with quality scores, channel fit, and strategic recommendations tailored to your actual audience data
+
+**What the AI can do with Lytics connected:**
+- Answer questions about your scoring data — "what does my opportunity score mean?"
+- Build and manage audience segments — "create an audience of US users who visited 5+ times"
+- Look up user profiles — "find user john@example.com and show their segments"
+- Diagnose issues — "why isn't this user in the High Value segment?"
+- Check data health — "is my data flowing correctly?"
+- Set up integrations — "export my high-value audience to Facebook"
 
 **Primary Domains:** Each Spark has a configurable primary domain (globe icon in the header). This tells Lytics which website to anchor content lookups to, ensuring the most relevant audience data is surfaced.
 

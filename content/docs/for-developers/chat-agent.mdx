@@ -41,17 +41,22 @@ const semanticSearchSparkItems = tool(
 
 The full tool set includes:
 
-| Tool | Type | Purpose |
+| Tool | Risk | Purpose |
 |------|------|---------|
-| `semantic_search_spark_items` | Read | Vector similarity search on items |
-| `search_spark_items` | Read | Exact keyword search on items |
-| `list_spark_items` | Read | List all items in a Spark |
+| `semantic_search` | Read | Vector similarity search on items |
+| `keyword_search` | Read | Exact keyword search on items |
+| `list_items` | Read | List all items in a Spark |
 | `get_spark_details` | Read | Get Spark name/description |
-| `list_generated_artifacts` | Read | List previously generated artifacts |
-| `web_search` | Read | Search the web via API |
+| `web_search` | Read | Search the web via Anthropic hosted tool |
 | `scrape_url` | Read | Deep scrape a specific URL |
-| `save_web_research` | Write | Persist web research findings |
-| CMS tools | Write | Create/update Contentstack entries |
+| `save_web_research` | Read | Persist web research findings |
+| `lytics_insights` | Read | Query cached Lytics data (segments, opportunity, content alignment, profile affinities) |
+| `lytics_api` | Dynamic | General-purpose Lytics REST API proxy — any endpoint. Risk varies: GET=read, POST/PUT=write, DELETE=destructive |
+| `use_skill` | Read | Load a skill's full instructions to guide agent behavior |
+| `get_skill_resource` | Read | Load a named reference document from an activated skill |
+| `draft_skill` | Read | Draft a new reusable skill from conversation context |
+| `update_editor` | Read | Apply content to the Spark Editor document |
+| CMS tools (12) | Read/Write | Contentstack CRUD: content types, entries, environments, languages |
 
 ### ReAct Loop
 
@@ -123,6 +128,28 @@ The chat SSE stream sends these event types:
 | `approval_request` | `{ id, tool, description, preview }` | Write operation approval |
 | `done` | `{ session_id }` | Stream complete |
 | `error` | `{ content: string }` | Error message |
+
+### Skills System
+
+Skills are reusable instruction sets stored in the `skills` Supabase table. They use progressive disclosure:
+
+1. **Level 1:** All active skills are listed by name + description in the system prompt. The agent sees trigger phrases and decides when to activate.
+2. **Level 2:** When the agent calls `use_skill`, the full instructions load as a tool result.
+
+Skills can reference other skills (e.g., `lytics-audience-builder` hands off to `lytics-segment-manager`), creating composable workflows. The `lytics-agent` router skill classifies intent and routes to 20+ specialized Lytics CDP skills.
+
+Skills support `{{variable}}` placeholders with per-Spark overrides and can bundle reference documents loadable via `get_skill_resource`.
+
+```typescript
+// Skills are fetched and injected into the system prompt
+const { data: activeSkills } = await supabaseAdmin
+  .from('skills')
+  .select('id, name, description')
+  .or(`spark_id.eq.${spark_id},spark_id.is.null`)
+  .eq('is_active', true);
+
+skillsPromptSection = `\n\n## Available Skills\n${skillList}`;
+```
 
 ### System Prompt
 
