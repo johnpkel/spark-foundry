@@ -61,12 +61,28 @@ export const TOOL_RISK: Record<string, ToolRisk> = {
   update_editor: 'read',
 };
 
+// Lytics POST endpoints that are read-only (use POST only because they accept a body)
+const LYTICS_READ_ONLY_POSTS = [
+  '/api/segment/size',
+  '/api/segment/validate',
+  '/v2/content/enrich',
+  '/v2/content/align',
+  '/v2/content/opportunity',
+  '/v2/identity/lookup',
+];
+
 export function getToolRisk(name: string, input?: Record<string, unknown>): ToolRisk {
-  // lytics_api risk depends on the HTTP method
+  // lytics_api risk depends on the HTTP method + path
   if (name === 'lytics_api' && input) {
     const method = (input.method as string)?.toUpperCase();
+    const path = (input.path as string) || '';
     if (method === 'DELETE') return 'destructive';
-    if (method === 'POST' || method === 'PUT') return 'write';
+    if (method === 'PUT') return 'write';
+    if (method === 'POST') {
+      // Some POST endpoints are read-only queries (they use POST for the body, not to mutate)
+      if (LYTICS_READ_ONLY_POSTS.some((p) => path.startsWith(p))) return 'read';
+      return 'write';
+    }
   }
   return TOOL_RISK[name] || 'read';
 }
